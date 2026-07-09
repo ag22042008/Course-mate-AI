@@ -1,14 +1,19 @@
+import os
+import tempfile
+
 import streamlit as st
 from dotenv import load_dotenv
-from langchain_mistralai import MistralAIEmbeddings, ChatMistralAI
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 load_dotenv()
 
 st.set_page_config(page_title="The Reading Room", page_icon="📚", layout="wide")
 
-PERSIST_DIR = "chroma-db"  # <-- must match create_db.py's persist_directory
+PERSIST_DIR = "chroma_db"
 
 PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -57,10 +62,8 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     color: var(--chalk);
 }
 
-/* Hide default Streamlit chrome */
 #MainMenu, footer, header { visibility: hidden; }
 
-/* ---- Header plate ---- */
 .rr-header {
     border: 1px solid rgba(176, 141, 87, 0.4);
     border-radius: 2px;
@@ -98,7 +101,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     margin-top: 6px;
 }
 
-/* ---- Sidebar ---- */
 section[data-testid="stSidebar"] {
     background: var(--ink-soft);
     border-right: 1px solid rgba(176,141,87,0.25);
@@ -118,11 +120,9 @@ section[data-testid="stSidebar"] label p {
     letter-spacing: 0.05em;
 }
 
-/* Slider accent */
 div[data-baseweb="slider"] div[role="slider"] { background-color: var(--brass) !important; }
 div[data-testid="stSliderThumbValue"] { color: var(--brass) !important; }
 
-/* Sidebar button */
 section[data-testid="stSidebar"] button {
     background: transparent !important;
     border: 1px solid var(--brass) !important;
@@ -136,17 +136,14 @@ section[data-testid="stSidebar"] button:hover {
     background: rgba(176,141,87,0.12) !important;
 }
 
-/* ---- Chat bubbles ---- */
-div[data-testid="stChatMessage"] {
-    background: transparent;
-    padding: 0;
-}
-div[data-testid="stChatMessageContent"] {
-    border-radius: 4px;
-    padding: 4px 2px;
+div[data-testid="stFileUploaderDropzone"] {
+    background: rgba(176,141,87,0.06) !important;
+    border: 1px dashed rgba(176,141,87,0.5) !important;
 }
 
-/* User message */
+div[data-testid="stChatMessage"] { background: transparent; padding: 0; }
+div[data-testid="stChatMessageContent"] { border-radius: 4px; padding: 4px 2px; }
+
 div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) div[data-testid="stChatMessageContent"] {
     background: rgba(176, 141, 87, 0.08);
     border: 1px solid rgba(176, 141, 87, 0.3);
@@ -156,7 +153,6 @@ div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"])
     color: var(--chalk);
 }
 
-/* Assistant message */
 div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssistant"]) div[data-testid="stChatMessageContent"] {
     background: var(--paper);
     border: 1px solid var(--paper-dim);
@@ -171,7 +167,6 @@ div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssista
     color: var(--ink) !important;
 }
 
-/* ---- Catalog slip (sources) ---- */
 .rr-catalog-label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 11px;
@@ -202,14 +197,8 @@ div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssista
     border-radius: 2px;
     margin-right: 8px;
 }
-.rr-slip-meta {
-    color: var(--moss);
-    font-size: 11px;
-    margin-top: 6px;
-    opacity: 0.85;
-}
+.rr-slip-meta { color: var(--moss); font-size: 11px; margin-top: 6px; opacity: 0.85; }
 
-/* Expander restyle to look like a catalog drawer pull */
 div[data-testid="stExpander"] {
     background: transparent;
     border: 1px solid rgba(176,141,87,0.35);
@@ -222,7 +211,6 @@ div[data-testid="stExpander"] summary {
     letter-spacing: 0.04em;
 }
 
-/* Chat input box */
 div[data-testid="stChatInput"] {
     background: var(--ink-soft);
     border: 1px solid rgba(176,141,87,0.4);
@@ -233,11 +221,17 @@ div[data-testid="stChatInput"] textarea {
     font-family: 'Inter', sans-serif !important;
 }
 
-/* Divider */
-.rr-rule {
-    border: none;
-    border-top: 1px dashed rgba(176,141,87,0.3);
-    margin: 18px 0;
+.rr-rule { border: none; border-top: 1px dashed rgba(176,141,87,0.3); margin: 18px 0; }
+
+.rr-empty {
+    border: 1px dashed rgba(176,141,87,0.4);
+    border-radius: 4px;
+    padding: 40px 24px;
+    text-align: center;
+    color: rgba(242,239,230,0.6);
+    font-family: 'Lora', serif;
+    font-size: 17px;
+    margin-top: 10px;
 }
 </style>
 """,
@@ -245,19 +239,67 @@ div[data-testid="stChatInput"] textarea {
 )
 
 
+# ---------------- Cached / persistent resources ----------------
 @st.cache_resource
-def load_pipeline(k, fetch_k, lambda_mult, model_name):
-    embedding_model = MistralAIEmbeddings()
-    vector_store = Chroma(
-        persist_directory=PERSIST_DIR,
-        embedding_function=embedding_model,
-    )
-    retriever = vector_store.as_retriever(
+def get_embedding_model():
+    return MistralAIEmbeddings()
+
+
+def get_llm(model_name):
+    return ChatMistralAI(model=model_name)
+
+
+def index_files(uploaded_files, chunk_size, chunk_overlap):
+    """Chunk uploaded PDFs, embed them, and store/update them in the Chroma vector store."""
+    embedding_model = get_embedding_model()
+    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+    all_chunks = []
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for uploaded_file in uploaded_files:
+            tmp_path = os.path.join(tmp_dir, uploaded_file.name)
+            with open(tmp_path, "wb") as f:
+                f.write(uploaded_file.getvalue())
+            loader = PyPDFLoader(tmp_path)
+            docs = loader.load()
+            # Fix source metadata to the real filename rather than the temp path
+            for d in docs:
+                d.metadata["source"] = uploaded_file.name
+            chunks = splitter.split_documents(docs)
+            all_chunks.extend(chunks)
+
+    if not all_chunks:
+        return 0
+
+    vectorstore = Chroma(persist_directory=PERSIST_DIR, embedding_function=embedding_model)
+    vectorstore.add_documents(all_chunks)
+    st.session_state.vectorstore_ready = True
+    st.session_state.indexed_files = st.session_state.get("indexed_files", set()) | {
+        f.name for f in uploaded_files
+    }
+    return len(all_chunks)
+
+
+def load_existing_vectorstore():
+    """Reuse a chroma_db folder from a previous session/run, if present."""
+    if os.path.isdir(PERSIST_DIR) and os.listdir(PERSIST_DIR):
+        embedding_model = get_embedding_model()
+        vs = Chroma(persist_directory=PERSIST_DIR, embedding_function=embedding_model)
+        try:
+            if vs._collection.count() > 0:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def get_retriever(k, fetch_k, lambda_mult):
+    embedding_model = get_embedding_model()
+    vectorstore = Chroma(persist_directory=PERSIST_DIR, embedding_function=embedding_model)
+    return vectorstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": k, "fetch_k": fetch_k, "lambda_mult": lambda_mult},
     )
-    llm = ChatMistralAI(model=model_name)
-    return retriever, llm
 
 
 def answer_query(query, retriever, llm):
@@ -269,7 +311,6 @@ def answer_query(query, retriever, llm):
 
 
 def render_slips(docs):
-    """Render retrieved chunks as catalog-card 'slips'."""
     st.markdown('<div class="rr-catalog-label">◆ Consulted passages</div>', unsafe_allow_html=True)
     with st.expander(f"Open catalog drawer ({len(docs)} slips)"):
         for i, doc in enumerate(docs, 1):
@@ -287,18 +328,56 @@ def render_slips(docs):
             )
 
 
+# ---------------- Session state init ----------------
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "vectorstore_ready" not in st.session_state:
+    st.session_state.vectorstore_ready = load_existing_vectorstore()
+if "indexed_files" not in st.session_state:
+    st.session_state.indexed_files = set()
+
 # ---------------- Sidebar ----------------
 with st.sidebar:
-    st.markdown("## Catalog Settings")
+    st.markdown("## ① Add documents")
+    uploaded_files = st.file_uploader(
+        "Upload PDF(s) to add to the archive",
+        type=["pdf"],
+        accept_multiple_files=True,
+    )
+    chunk_size = st.number_input("Chunk size", min_value=200, max_value=4000, value=1000, step=100)
+    chunk_overlap = st.number_input("Chunk overlap", min_value=0, max_value=1000, value=200, step=50)
+
+    if st.button("📥 Index documents", disabled=not uploaded_files):
+        with st.spinner("Splitting, embedding, and filing into the archive..."):
+            n_chunks = index_files(uploaded_files, chunk_size, chunk_overlap)
+        st.success(f"Indexed {n_chunks} chunks from {len(uploaded_files)} file(s).")
+
+    if st.session_state.indexed_files:
+        st.caption("Filed in this session: " + ", ".join(sorted(st.session_state.indexed_files)))
+
+    st.markdown('<hr class="rr-rule">', unsafe_allow_html=True)
+    st.markdown("## ② Retrieval settings")
     model_name = st.selectbox("Model", ["mistral-small-2506", "mistral-large-latest"], index=0)
     k = st.slider("Slips returned (k)", 1, 20, 10)
     fetch_k = st.slider("Candidates scanned (fetch_k)", 10, 200, 100, step=10)
     lambda_mult = st.slider("Relevance ↔ Diversity", 0.0, 1.0, 0.5)
+
     st.markdown('<hr class="rr-rule">', unsafe_allow_html=True)
     st.caption(f"ARCHIVE: `{PERSIST_DIR}`")
-    if st.button("Clear the desk"):
-        st.session_state.messages = []
-        st.rerun()
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Clear chat"):
+            st.session_state.messages = []
+            st.rerun()
+    with col2:
+        if st.button("Reset archive"):
+            import shutil
+
+            shutil.rmtree(PERSIST_DIR, ignore_errors=True)
+            st.session_state.vectorstore_ready = False
+            st.session_state.indexed_files = set()
+            st.session_state.messages = []
+            st.rerun()
 
 # ---------------- Header ----------------
 st.markdown(
@@ -306,22 +385,28 @@ st.markdown(
 <div class="rr-header">
     <div class="rr-eyebrow">Est. for grounded answers only</div>
     <p class="rr-title">The Reading Room</p>
-    <p class="rr-sub">Ask a question. Every answer is drawn strictly from what's on record below — nothing is improvised.</p>
+    <p class="rr-sub">Upload a document, let it be filed and embedded, then ask a question — every answer is drawn strictly from what's on record.</p>
 </div>
 """,
     unsafe_allow_html=True,
 )
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# ---------------- Main: chat or empty state ----------------
+if not st.session_state.vectorstore_ready:
+    st.markdown(
+        '<div class="rr-empty">The archive is empty.<br>Upload a PDF in the sidebar and click '
+        '<b>Index documents</b> to begin.</div>',
+        unsafe_allow_html=True,
+    )
+    st.stop()
 
 try:
-    retriever, llm = load_pipeline(k, fetch_k, lambda_mult, model_name)
+    retriever = get_retriever(k, fetch_k, lambda_mult)
+    llm = get_llm(model_name)
 except Exception as e:
     st.error(f"Could not open the archive: {e}")
     st.stop()
 
-# ---------------- Render history ----------------
 for msg in st.session_state.messages:
     avatar = "🖋️" if msg["role"] == "user" else "📖"
     with st.chat_message(msg["role"], avatar=avatar):
@@ -329,7 +414,6 @@ for msg in st.session_state.messages:
         if msg["role"] == "assistant" and msg.get("sources"):
             render_slips(msg["sources"])
 
-# ---------------- Chat input ----------------
 query = st.chat_input("Ask the archive...")
 
 if query:
