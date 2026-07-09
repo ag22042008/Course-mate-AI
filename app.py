@@ -13,7 +13,32 @@ load_dotenv()
 
 st.set_page_config(page_title="The Reading Room", page_icon="📚", layout="wide")
 
-PERSIST_DIR = "chroma_db"
+PERSIST_DIR = "chroma-db"
+
+
+def get_mistral_api_key():
+    key = None
+    try:
+        key = st.secrets.get("MISTRAL_API_KEY")
+    except Exception:
+        key = None
+    if not key:
+        key = os.environ.get("MISTRAL_API_KEY")
+    if key:
+        key = key.strip()
+        os.environ["MISTRAL_API_KEY"] = key
+    return key
+
+
+MISTRAL_API_KEY = get_mistral_api_key()
+
+if not MISTRAL_API_KEY:
+    st.error(
+        "MISTRAL_API_KEY is missing. Locally: add it to a .env file. "
+        "On Streamlit Cloud: go to Manage app > Settings > Secrets and add "
+        "MISTRAL_API_KEY = your_key, then reboot the app."
+    )
+    st.stop()
 
 PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -242,11 +267,11 @@ div[data-testid="stChatInput"] textarea {
 # ---------------- Cached / persistent resources ----------------
 @st.cache_resource
 def get_embedding_model():
-    return MistralAIEmbeddings()
+    return MistralAIEmbeddings(api_key=MISTRAL_API_KEY)
 
 
 def get_llm(model_name):
-    return ChatMistralAI(model=model_name)
+    return ChatMistralAI(model=model_name, api_key=MISTRAL_API_KEY)
 
 
 def index_files(uploaded_files, chunk_size, chunk_overlap):
