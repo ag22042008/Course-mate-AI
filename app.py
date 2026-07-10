@@ -444,7 +444,7 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Main — "The Reading Room"
 # ---------------------------------------------------------------------------
-st.markdown('<div class="marg-hero-title">Marginalia</div>', unsafe_allow_html=True)
+st.markdown('<div class="marg-hero-title">CourseMate-Ai</div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="marg-hero-sub">Ask questions. Answers stay within what the document actually says — '
     "and every answer cites the page it came from.</div>",
