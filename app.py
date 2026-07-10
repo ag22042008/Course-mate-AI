@@ -1,53 +1,21 @@
 import os
-import re
-import shutil
 import tempfile
-import traceback
 
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.vectorstores.utils import filter_complex_metadata
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 load_dotenv()
 
-st.set_page_config(page_title="AI Financial Advisor", page_icon="📊", layout="wide")
+st.set_page_config(page_title="The Reading Room", page_icon="📚", layout="wide")
 
-PERSIST_DIR = os.path.join(tempfile.gettempdir(), "coursemate_chroma_db")
-os.makedirs(PERSIST_DIR, exist_ok=True)
-try:
-    os.chmod(PERSIST_DIR, 0o777)
-except Exception:
-    pass  # best-effort; some hosts restrict chmod but still allow writes under tempdir
-
-SUGGESTED_QUESTIONS = [
-    "Summarize this company.",
-    "Should I invest in this company?",
-    "Analyze revenue growth.",
-    "Analyze profitability.",
-    "Analyze debt.",
-    "Analyze cash flow.",
-    "What are the major risks?",
-    "Future outlook.",
-    "Strengths and weaknesses.",
-]
-
-RATING_COLORS = {
-    "STRONG BUY": "#2E7D32",
-    "BUY": "#5C9A5F",
-    "HOLD": "#B08D57",
-    "SELL": "#B5654A",
-    "STRONG SELL": "#A6452C",
-}
+PERSIST_DIR = "chroma_db"
 
 
-# ============================
-# API key resolution
-# ============================
 def get_mistral_api_key():
     key = None
     try:
@@ -72,46 +40,21 @@ if not MISTRAL_API_KEY:
     )
     st.stop()
 
-# ============================
-# Prompt
-# ============================
 PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """
-You are an expert Financial Advisor and Equity Research Analyst.
-Answer ONLY using the provided context.
-If the answer is not present in the document, reply:
-"I could not find this information in the uploaded financial report."
-Whenever appropriate, analyze:
-• Revenue Growth
-• Profitability
-• Expenses
-• Assets
-• Liabilities
-• Cash Flow
-• Debt
-• Business Risks
-• Future Outlook
-If asked whether someone should invest, provide:
-Investment Rating:
-- Strong Buy
-- Buy
-- Hold
-- Sell
-- Strong Sell
-Explain every conclusion using evidence from the document.
-Mention page numbers whenever available.
-Never use outside knowledge.
-""",
+            """You are a helpful AI assistant.
+            Use ONLY the provided context to answer the question.
+            If the answer is not present in the context, say: "I could not find the answer in the document."
+            """,
         ),
         (
             "human",
-            """
-Context
+            """Context:
 {context}
-Question
+
+Question:
 {question}
 """,
         ),
@@ -119,7 +62,7 @@ Question
 )
 
 # ==================================================================================
-# STYLE — "The Ledger Room": a financial-archive theme (ink, brass, ledger paper)
+# STYLE — "The Reading Room": an ink-and-paper archive, sources shown as catalog slips
 # ==================================================================================
 st.markdown(
     """
@@ -134,89 +77,186 @@ st.markdown(
     --brass: #B08D57;
     --moss: #5C7A6A;
     --chalk: #F2EFE6;
+    --rust: #A6452C;
 }
 
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-.stApp { background: linear-gradient(180deg, var(--ink) 0%, var(--ink-soft) 100%); color: var(--chalk); }
+
+.stApp {
+    background: linear-gradient(180deg, var(--ink) 0%, var(--ink-soft) 100%);
+    color: var(--chalk);
+}
+
 #MainMenu, footer, header { visibility: hidden; }
 
-.fr-header {
-    border: 1px solid rgba(176,141,87,0.4);
+.rr-header {
+    border: 1px solid rgba(176, 141, 87, 0.4);
     border-radius: 2px;
     padding: 28px 32px;
-    margin-bottom: 24px;
-    background: var(--ink-soft);
+    margin-bottom: 28px;
+    background: repeating-linear-gradient(180deg, rgba(176,141,87,0.03) 0px, rgba(176,141,87,0.03) 2px, transparent 2px, transparent 4px), var(--ink-soft);
     position: relative;
 }
-.fr-header::before {
-    content: ""; position: absolute; inset: 6px;
-    border: 1px solid rgba(176,141,87,0.25); pointer-events: none;
+.rr-header::before {
+    content: "";
+    position: absolute;
+    inset: 6px;
+    border: 1px solid rgba(176, 141, 87, 0.25);
+    pointer-events: none;
 }
-.fr-eyebrow {
-    font-family: 'IBM Plex Mono', monospace; letter-spacing: 0.18em;
-    text-transform: uppercase; font-size: 11px; color: var(--brass); margin-bottom: 6px;
+.rr-eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-size: 11px;
+    color: var(--brass);
+    margin-bottom: 6px;
 }
-.fr-title { font-family: 'Lora', serif; font-weight: 600; font-size: 32px; color: var(--chalk); margin: 0; }
-.fr-sub { font-size: 14px; color: rgba(242,239,230,0.55); margin-top: 6px; }
+.rr-title {
+    font-family: 'Lora', serif;
+    font-weight: 600;
+    font-size: 34px;
+    color: var(--chalk);
+    margin: 0;
+}
+.rr-sub {
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    color: rgba(242,239,230,0.55);
+    margin-top: 6px;
+}
 
-section[data-testid="stSidebar"] { background: var(--ink-soft); border-right: 1px solid rgba(176,141,87,0.25); }
-section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 { font-family: 'Lora', serif; color: var(--brass); }
-section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] .stCaption { color: rgba(242,239,230,0.7) !important; }
+section[data-testid="stSidebar"] {
+    background: var(--ink-soft);
+    border-right: 1px solid rgba(176,141,87,0.25);
+}
+section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
+    font-family: 'Lora', serif;
+    color: var(--brass);
+}
+section[data-testid="stSidebar"] .stCaption, section[data-testid="stSidebar"] p {
+    color: rgba(242,239,230,0.7) !important;
+}
 section[data-testid="stSidebar"] label p {
-    font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-transform: uppercase;
-    letter-spacing: 0.05em; color: rgba(242,239,230,0.75) !important;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: rgba(242,239,230,0.75) !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
+
+div[data-baseweb="slider"] div[role="slider"] { background-color: var(--brass) !important; }
+div[data-testid="stSliderThumbValue"] { color: var(--brass) !important; }
+
 section[data-testid="stSidebar"] button {
-    background: transparent !important; border: 1px solid var(--brass) !important; color: var(--brass) !important;
-    font-family: 'IBM Plex Mono', monospace; font-size: 12px; border-radius: 2px !important;
+    background: transparent !important;
+    border: 1px solid var(--brass) !important;
+    color: var(--brass) !important;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    border-radius: 2px !important;
 }
-section[data-testid="stSidebar"] button:hover { background: rgba(176,141,87,0.12) !important; }
+section[data-testid="stSidebar"] button:hover {
+    background: rgba(176,141,87,0.12) !important;
+}
+
 div[data-testid="stFileUploaderDropzone"] {
-    background: rgba(176,141,87,0.06) !important; border: 1px dashed rgba(176,141,87,0.5) !important;
+    background: rgba(176,141,87,0.06) !important;
+    border: 1px dashed rgba(176,141,87,0.5) !important;
 }
 
 div[data-testid="stChatMessage"] { background: transparent; padding: 0; }
 div[data-testid="stChatMessageContent"] { border-radius: 4px; padding: 4px 2px; }
+
 div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) div[data-testid="stChatMessageContent"] {
-    background: rgba(176,141,87,0.08); border: 1px solid rgba(176,141,87,0.3);
-    border-radius: 4px; padding: 14px 18px; color: var(--chalk);
+    background: rgba(176, 141, 87, 0.08);
+    border: 1px solid rgba(176, 141, 87, 0.3);
+    border-radius: 4px;
+    padding: 14px 18px;
+    font-family: 'Inter', sans-serif;
+    color: var(--chalk);
 }
+
 div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssistant"]) div[data-testid="stChatMessageContent"] {
-    background: var(--paper); border: 1px solid var(--paper-dim); border-radius: 4px;
-    padding: 16px 20px; font-family: 'Lora', serif; color: var(--ink); font-size: 16px; line-height: 1.6;
+    background: var(--paper);
+    border: 1px solid var(--paper-dim);
+    border-radius: 4px;
+    padding: 16px 20px;
+    font-family: 'Lora', serif;
+    color: var(--ink);
+    font-size: 16px;
+    line-height: 1.6;
 }
-div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssistant"]) div[data-testid="stChatMessageContent"] p { color: var(--ink) !important; }
+div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssistant"]) div[data-testid="stChatMessageContent"] p {
+    color: var(--ink) !important;
+}
 
-.fr-rating {
-    display: inline-block; font-family: 'IBM Plex Mono', monospace; font-weight: 700;
-    font-size: 13px; letter-spacing: 0.05em; color: #fff; padding: 5px 14px;
-    border-radius: 3px; margin: 6px 0 12px 0;
+.rr-catalog-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--moss);
+    margin: 10px 0 6px 2px;
 }
-.fr-catalog-label {
-    font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--moss); margin: 10px 0 6px 2px;
+.rr-slip {
+    background: var(--paper);
+    border: 1px solid var(--paper-dim);
+    border-left: 3px solid var(--brass);
+    border-radius: 2px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink);
+    line-height: 1.55;
 }
-.fr-slip {
-    background: var(--paper); border: 1px solid var(--paper-dim); border-left: 3px solid var(--brass);
-    border-radius: 2px; padding: 12px 14px; margin-bottom: 8px;
-    font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--ink); line-height: 1.55;
+.rr-slip-num {
+    display: inline-block;
+    background: var(--brass);
+    color: var(--ink);
+    font-weight: 700;
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 2px;
+    margin-right: 8px;
 }
-.fr-slip-num {
-    display: inline-block; background: var(--brass); color: var(--ink); font-weight: 700;
-    font-size: 11px; padding: 1px 7px; border-radius: 2px; margin-right: 8px;
-}
-.fr-slip-meta { color: var(--moss); font-size: 11px; margin-top: 6px; opacity: 0.85; }
+.rr-slip-meta { color: var(--moss); font-size: 11px; margin-top: 6px; opacity: 0.85; }
 
-div[data-testid="stExpander"] { background: transparent; border: 1px solid rgba(176,141,87,0.35); border-radius: 3px; }
-div[data-testid="stExpander"] summary { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--brass); }
+div[data-testid="stExpander"] {
+    background: transparent;
+    border: 1px solid rgba(176,141,87,0.35);
+    border-radius: 3px;
+}
+div[data-testid="stExpander"] summary {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--brass);
+    letter-spacing: 0.04em;
+}
 
-div[data-testid="stChatInput"] { background: var(--ink-soft); border: 1px solid rgba(176,141,87,0.4); border-radius: 4px; }
-div[data-testid="stChatInput"] textarea { color: var(--chalk) !important; }
+div[data-testid="stChatInput"] {
+    background: var(--ink-soft);
+    border: 1px solid rgba(176,141,87,0.4);
+    border-radius: 4px;
+}
+div[data-testid="stChatInput"] textarea {
+    color: var(--chalk) !important;
+    font-family: 'Inter', sans-serif !important;
+}
 
-.fr-rule { border: none; border-top: 1px dashed rgba(176,141,87,0.3); margin: 16px 0; }
-.fr-empty {
-    border: 1px dashed rgba(176,141,87,0.4); border-radius: 4px; padding: 40px 24px;
-    text-align: center; color: rgba(242,239,230,0.6); font-family: 'Lora', serif; font-size: 17px; margin-top: 10px;
+.rr-rule { border: none; border-top: 1px dashed rgba(176,141,87,0.3); margin: 18px 0; }
+
+.rr-empty {
+    border: 1px dashed rgba(176,141,87,0.4);
+    border-radius: 4px;
+    padding: 40px 24px;
+    text-align: center;
+    color: rgba(242,239,230,0.6);
+    font-family: 'Lora', serif;
+    font-size: 17px;
+    margin-top: 10px;
 }
 </style>
 """,
@@ -224,20 +264,18 @@ div[data-testid="stChatInput"] textarea { color: var(--chalk) !important; }
 )
 
 
-# ============================
-# Cached resources
-# ============================
+# ---------------- Cached / persistent resources ----------------
 @st.cache_resource
 def get_embedding_model():
     return MistralAIEmbeddings(api_key=MISTRAL_API_KEY)
 
 
-def get_llm(model_name, temperature):
-    return ChatMistralAI(model=model_name, temperature=temperature, api_key=MISTRAL_API_KEY)
+def get_llm(model_name):
+    return ChatMistralAI(model=model_name, api_key=MISTRAL_API_KEY)
 
 
 def index_files(uploaded_files, chunk_size, chunk_overlap):
-    """Load, chunk, embed, and store multiple uploaded PDFs into the Chroma vector store."""
+    """Chunk uploaded PDFs, embed them, and store/update them in the Chroma vector store."""
     embedding_model = get_embedding_model()
     splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
@@ -249,35 +287,17 @@ def index_files(uploaded_files, chunk_size, chunk_overlap):
                 f.write(uploaded_file.getvalue())
             loader = PyPDFLoader(tmp_path)
             docs = loader.load()
+            # Fix source metadata to the real filename rather than the temp path
             for d in docs:
-                d.metadata["source"] = uploaded_file.name  # keep the real filename, not the temp path
+                d.metadata["source"] = uploaded_file.name
             chunks = splitter.split_documents(docs)
             all_chunks.extend(chunks)
 
     if not all_chunks:
         return 0
 
-    # Chroma's Rust backend rejects metadata values that are None, dicts, or
-    # lists (common in PDF metadata like producer/creator/subject/keywords).
-    # Strip/clean those out before they ever reach the collection, otherwise
-    # `add_documents` fails with an opaque InternalError.
-    all_chunks = filter_complex_metadata(all_chunks)
-
-    try:
-        vectorstore = Chroma(persist_directory=PERSIST_DIR, embedding_function=embedding_model)
-        vectorstore.add_documents(all_chunks)
-    except Exception as e:
-        # Log the full traceback server-side since Streamlit Cloud redacts
-        # the on-screen message for internal errors.
-        print("FULL CHROMA UPSERT ERROR:\n", traceback.format_exc())
-        if "readonly database" in str(e).lower() or "1032" in str(e):
-            raise RuntimeError(
-                f"The vector database folder ({PERSIST_DIR}) isn't writable on this host. "
-                "Try clicking 'Reset archive' in the sidebar to recreate it, or redeploy the app "
-                "so it regenerates a fresh temp directory."
-            ) from e
-        raise
-
+    vectorstore = Chroma(persist_directory=PERSIST_DIR, embedding_function=embedding_model)
+    vectorstore.add_documents(all_chunks)
     st.session_state.vectorstore_ready = True
     st.session_state.indexed_files = st.session_state.get("indexed_files", set()) | {
         f.name for f in uploaded_files
@@ -286,6 +306,7 @@ def index_files(uploaded_files, chunk_size, chunk_overlap):
 
 
 def load_existing_vectorstore():
+    """Reuse a chroma_db folder from a previous session/run, if present."""
     if os.path.isdir(PERSIST_DIR) and os.listdir(PERSIST_DIR):
         embedding_model = get_embedding_model()
         vs = Chroma(persist_directory=PERSIST_DIR, embedding_function=embedding_model)
@@ -306,74 +327,45 @@ def get_retriever(k, fetch_k, lambda_mult):
     )
 
 
-def build_context(docs):
-    """Stitch retrieved chunks into context text, labeled with 1-indexed page numbers."""
-    context = ""
-    for doc in docs:
-        page = doc.metadata.get("page", "Unknown")
-        if page != "Unknown":
-            page = page + 1
-        context += f"\n\n========== Page {page} ({doc.metadata.get('source', 'document')}) ==========\n"
-        context += doc.page_content
-    return context
-
-
 def answer_query(query, retriever, llm):
     docs = retriever.invoke(query)
-    if not docs:
-        return "I could not find this information in the uploaded financial report.", []
-    context = build_context(docs)
+    context = "\n\n".join(doc.page_content for doc in docs)
     final_prompt = PROMPT.invoke({"context": context, "question": query})
     response = llm.invoke(final_prompt)
     return response.content, docs
 
 
-def extract_rating(text):
-    match = re.search(r"Investment Rating:\s*\**\s*(Strong Buy|Strong Sell|Buy|Hold|Sell)", text, re.IGNORECASE)
-    if match:
-        return match.group(1).upper()
-    return None
-
-
 def render_slips(docs):
-    st.markdown('<div class="fr-catalog-label">◆ Cited passages</div>', unsafe_allow_html=True)
-    with st.expander(f"Open filing drawer ({len(docs)} excerpts)"):
+    st.markdown('<div class="rr-catalog-label">◆ Consulted passages</div>', unsafe_allow_html=True)
+    with st.expander(f"Open catalog drawer ({len(docs)} slips)"):
         for i, doc in enumerate(docs, 1):
             page = doc.metadata.get("page", "—")
-            if page != "—" and page != "Unknown":
-                page = page + 1 if isinstance(page, int) else page
             source = doc.metadata.get("source", "document")
             snippet = doc.page_content.strip().replace("\n", " ")
             if len(snippet) > 480:
                 snippet = snippet[:480].rsplit(" ", 1)[0] + " …"
             st.markdown(
-                f"""<div class="fr-slip">
-                <span class="fr-slip-num">{i:02d}</span>{snippet}
-                <div class="fr-slip-meta">source: {source} · page {page}</div>
+                f"""<div class="rr-slip">
+                <span class="rr-slip-num">{i:02d}</span>{snippet}
+                <div class="rr-slip-meta">source: {source} · page {page}</div>
                 </div>""",
                 unsafe_allow_html=True,
             )
 
 
-# ============================
-# Session state init
-# ============================
+# ---------------- Session state init ----------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "vectorstore_ready" not in st.session_state:
     st.session_state.vectorstore_ready = load_existing_vectorstore()
 if "indexed_files" not in st.session_state:
     st.session_state.indexed_files = set()
-if "pending_query" not in st.session_state:
-    st.session_state.pending_query = None
 
-# ============================
-# Sidebar
-# ============================
+# ---------------- Sidebar ----------------
 with st.sidebar:
-    st.markdown("## ① Upload financial reports")
+    st.markdown("## ① Add documents")
     uploaded_files = st.file_uploader(
-        "Upload one or more PDFs (10-K, annual report, earnings deck, etc.)",
+        "Upload PDF(s) to add to the archive",
         type=["pdf"],
         accept_multiple_files=True,
     )
@@ -381,26 +373,22 @@ with st.sidebar:
     chunk_overlap = st.number_input("Chunk overlap", min_value=0, max_value=1000, value=200, step=50)
 
     if st.button("📥 Index documents", disabled=not uploaded_files):
-        with st.spinner("Splitting, embedding, and filing the report(s)..."):
-            try:
-                n_chunks = index_files(uploaded_files, chunk_size, chunk_overlap)
-                st.success(f"Indexed {n_chunks} chunks from {len(uploaded_files)} file(s).")
-            except Exception as e:
-                st.error(f"Indexing failed: {e}")
+        with st.spinner("Splitting, embedding, and filing into the archive..."):
+            n_chunks = index_files(uploaded_files, chunk_size, chunk_overlap)
+        st.success(f"Indexed {n_chunks} chunks from {len(uploaded_files)} file(s).")
 
     if st.session_state.indexed_files:
-        st.caption("Filed this session: " + ", ".join(sorted(st.session_state.indexed_files)))
+        st.caption("Filed in this session: " + ", ".join(sorted(st.session_state.indexed_files)))
 
-    st.markdown('<hr class="fr-rule">', unsafe_allow_html=True)
-    st.markdown("## ② Analysis settings")
+    st.markdown('<hr class="rr-rule">', unsafe_allow_html=True)
+    st.markdown("## ② Retrieval settings")
     model_name = st.selectbox("Model", ["mistral-small-2506", "mistral-large-latest"], index=0)
-    temperature = st.slider("Temperature", 0.0, 1.0, 0.2)
-    k = st.slider("Chunks returned (k)", 1, 30, 15)
-    fetch_k = st.slider("Candidates scanned (fetch_k)", 10, 200, 60, step=10)
-    lambda_mult = st.slider("Relevance ↔ Diversity", 0.0, 1.0, 0.7)
+    k = st.slider("Slips returned (k)", 1, 20, 10)
+    fetch_k = st.slider("Candidates scanned (fetch_k)", 10, 200, 100, step=10)
+    lambda_mult = st.slider("Relevance ↔ Diversity", 0.0, 1.0, 0.5)
 
-    st.markdown('<hr class="fr-rule">', unsafe_allow_html=True)
-    st.caption(f"VECTOR STORE: `{PERSIST_DIR}`")
+    st.markdown('<hr class="rr-rule">', unsafe_allow_html=True)
+    st.caption(f"ARCHIVE: `{PERSIST_DIR}`")
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Clear chat"):
@@ -408,94 +396,64 @@ with st.sidebar:
             st.rerun()
     with col2:
         if st.button("Reset archive"):
+            import shutil
+
             shutil.rmtree(PERSIST_DIR, ignore_errors=True)
             st.session_state.vectorstore_ready = False
             st.session_state.indexed_files = set()
             st.session_state.messages = []
             st.rerun()
 
-# ============================
-# Header
-# ============================
+# ---------------- Header ----------------
 st.markdown(
     """
-<div class="fr-header">
-    <div class="fr-eyebrow">Equity research · grounded in your filings only</div>
-    <p class="fr-title">AI Financial Advisor</p>
-    <p class="fr-sub">Upload financial reports, then ask about revenue, profitability, debt, risk, or get an investment rating — every answer is backed by cited pages.</p>
+<div class="rr-header">
+    <div class="rr-eyebrow">Est. for grounded answers only</div>
+    <p class="rr-title">The Reading Room</p>
+    <p class="rr-sub">Upload a document, let it be filed and embedded, then ask a question — every answer is drawn strictly from what's on record.</p>
 </div>
 """,
     unsafe_allow_html=True,
 )
 
+# ---------------- Main: chat or empty state ----------------
 if not st.session_state.vectorstore_ready:
     st.markdown(
-        '<div class="fr-empty">No reports on file yet.<br>Upload one or more PDFs in the sidebar and click '
+        '<div class="rr-empty">The archive is empty.<br>Upload a PDF in the sidebar and click '
         '<b>Index documents</b> to begin.</div>',
         unsafe_allow_html=True,
     )
     st.stop()
 
-# Suggested questions
-st.markdown("**Suggested questions**")
-cols = st.columns(3)
-for i, q in enumerate(SUGGESTED_QUESTIONS):
-    if cols[i % 3].button(q, key=f"sugg_{i}", use_container_width=True):
-        st.session_state.pending_query = q
-
 try:
     retriever = get_retriever(k, fetch_k, lambda_mult)
-    llm = get_llm(model_name, temperature)
+    llm = get_llm(model_name)
 except Exception as e:
-    st.error(f"Could not reach the model or vector store: {e}")
+    st.error(f"Could not open the archive: {e}")
     st.stop()
 
-# ============================
-# Render chat history
-# ============================
 for msg in st.session_state.messages:
-    avatar = "🗣️" if msg["role"] == "user" else "📊"
+    avatar = "🖋️" if msg["role"] == "user" else "📖"
     with st.chat_message(msg["role"], avatar=avatar):
-        rating = msg.get("rating")
-        if rating:
-            color = RATING_COLORS.get(rating, "#B08D57")
-            st.markdown(
-                f'<div class="fr-rating" style="background:{color};">Investment Rating: {rating.title()}</div>',
-                unsafe_allow_html=True,
-            )
         st.markdown(msg["content"])
         if msg["role"] == "assistant" and msg.get("sources"):
             render_slips(msg["sources"])
 
-# ============================
-# Chat input (typed or suggested)
-# ============================
-typed_query = st.chat_input("Ask about revenue, debt, risk, outlook, or request an investment rating...")
-query = st.session_state.pending_query or typed_query
-st.session_state.pending_query = None
+query = st.chat_input("Ask the archive...")
 
 if query:
     st.session_state.messages.append({"role": "user", "content": query})
-    with st.chat_message("user", avatar="🗣️"):
+    with st.chat_message("user", avatar="🖋️"):
         st.markdown(query)
 
-    with st.chat_message("assistant", avatar="📊"):
-        with st.spinner("Reviewing the filings..."):
+    with st.chat_message("assistant", avatar="📖"):
+        with st.spinner("Searching the stacks..."):
             try:
                 answer, docs = answer_query(query, retriever, llm)
             except Exception as e:
-                answer, docs = f"The analysis could not be completed: {e}", []
-        rating = extract_rating(answer)
-        if rating:
-            color = RATING_COLORS.get(rating, "#B08D57")
-            st.markdown(
-                f'<div class="fr-rating" style="background:{color};">Investment Rating: {rating.title()}</div>',
-                unsafe_allow_html=True,
-            )
+                answer, docs = f"The archive could not be reached: {e}", []
         st.markdown(answer)
         if docs:
             render_slips(docs)
 
-    st.session_state.messages.append(
-        {"role": "assistant", "content": answer, "sources": docs, "rating": rating}
-    )
+    st.session_state.messages.append({"role": "assistant", "content": answer, "sources": docs})
