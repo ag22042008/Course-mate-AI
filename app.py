@@ -310,7 +310,13 @@ def index_files(uploaded_files, chunk_size, chunk_overlap):
     if not all_chunks:
         return 0
 
-    vectorstore = Chroma(persist_directory=PERSIST_DIR, embedding_function=embedding_model)
+    if not os.path.exists(PERSIST_DIR):
+    os.makedirs(PERSIST_DIR)
+
+vectorstore = Chroma(
+    persist_directory=PERSIST_DIR,
+    embedding_function=embedding_model
+)
     vectorstore.add_documents(all_chunks)
     st.session_state.vectorstore_ready = True
     st.session_state.indexed_files = st.session_state.get("indexed_files", set()) | {
@@ -409,14 +415,23 @@ with st.sidebar:
             st.session_state.messages = []
             st.rerun()
     with col2:
-        if st.button("Reset archive"):
-            import shutil
+    if st.button("Reset archive"):
+        import shutil
+        import os
 
+        try:
             shutil.rmtree(PERSIST_DIR, ignore_errors=True)
-            st.session_state.vectorstore_ready = False
-            st.session_state.indexed_files = set()
-            st.session_state.messages = []
-            st.rerun()
+        except:
+            pass
+
+        os.makedirs(PERSIST_DIR, exist_ok=True)
+
+        st.cache_resource.clear()      # <-- ADD THIS
+        st.session_state.vectorstore_ready = False
+        st.session_state.indexed_files = set()
+        st.session_state.messages = []
+
+        st.rerun()
 
 # ---------------- Header ----------------
 st.markdown('<div class="rr-project-tag">CourseMate AI</div>', unsafe_allow_html=True)
