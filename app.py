@@ -21,7 +21,7 @@ load_dotenv()
 PERSIST_DIR = "chroma_db"           # single, consistent directory name everywhere
 COLLECTION_NAME = "rag_collection"  # fixed collection name
 
-st.set_page_config(page_title="Marginalia", page_icon="🖋️", layout="wide")
+st.set_page_config(page_title="CourseMateAi", page_icon="🖋️", layout="wide")
 
 PROMPT = ChatPromptTemplate.from_messages(
     [
