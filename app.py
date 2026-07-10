@@ -1,5 +1,10 @@
+import os
+import tempfile
+
 import streamlit as st
 from dotenv import load_dotenv
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_mistralai import MistralAIEmbeddings, ChatMistralAI
 from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
@@ -10,7 +15,6 @@ st.set_page_config(page_title="CourseMate AI", page_icon="🎓", layout="wide")
 
 # ---------------------------------------------------------------------------
 # Visual identity — "annotated textbook" theme
-# Ink Navy sidebar, parchment page, highlighter-yellow accent, mono citation tags
 # ---------------------------------------------------------------------------
 
 st.markdown(
@@ -29,154 +33,67 @@ st.markdown(
     }
 
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-
     .stApp { background: var(--parchment); }
 
-    /* ---- Sidebar ---- */
-    [data-testid="stSidebar"] {
-        background: var(--ink);
-        border-right: 1px solid var(--line);
-    }
+    [data-testid="stSidebar"] { background: var(--ink); border-right: 1px solid var(--line); }
     [data-testid="stSidebar"] * { color: #EDE7D3 !important; }
     [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-        font-family: 'Fraunces', serif;
-        font-weight: 700;
-        letter-spacing: -0.01em;
+        font-family: 'Fraunces', serif; font-weight: 700; letter-spacing: -0.01em;
     }
     [data-testid="stSidebar"] hr { border-color: rgba(237,231,211,0.15); }
     [data-testid="stSidebar"] .stSlider label, [data-testid="stSidebar"] .stSelectbox label,
-    [data-testid="stSidebar"] .stTextInput label, [data-testid="stSidebar"] .stCheckbox label {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.72rem;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        color: #B9B190 !important;
+    [data-testid="stSidebar"] .stTextInput label, [data-testid="stSidebar"] .stCheckbox label,
+    [data-testid="stSidebar"] .stFileUploader label {
+        font-family: 'IBM Plex Mono', monospace; font-size: 0.72rem;
+        text-transform: uppercase; letter-spacing: 0.06em; color: #B9B190 !important;
     }
     [data-testid="stSidebar"] .stButton>button {
-        background: transparent;
-        border: 1px solid #B9B190;
-        color: #EDE7D3 !important;
-        border-radius: 6px;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.8rem;
+        background: transparent; border: 1px solid #B9B190; color: #EDE7D3 !important;
+        border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem;
     }
-    [data-testid="stSidebar"] .stButton>button:hover {
-        border-color: var(--highlighter);
-        color: var(--highlighter) !important;
+    [data-testid="stSidebar"] .stButton>button:hover { border-color: var(--highlighter); color: var(--highlighter) !important; }
+    [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+        background: rgba(244,211,94,0.06); border: 1px dashed #B9B190; border-radius: 8px;
     }
 
-    /* ---- Hero header ---- */
-    .hero-wrap {
-        display: flex;
-        align-items: baseline;
-        gap: 0.6rem;
-        margin-bottom: 0.1rem;
-    }
+    .hero-wrap { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.1rem; }
     .hero-title {
-        font-family: 'Fraunces', serif;
-        font-weight: 700;
-        font-size: 2.7rem;
-        color: var(--ink);
-        letter-spacing: -0.02em;
-        margin: 0;
+        font-family: 'Fraunces', serif; font-weight: 700; font-size: 2.7rem;
+        color: var(--ink); letter-spacing: -0.02em; margin: 0;
     }
     .hero-title .swipe {
         background-image: linear-gradient(var(--highlighter), var(--highlighter));
-        background-repeat: no-repeat;
-        background-size: 100% 38%;
-        background-position: 0 88%;
+        background-repeat: no-repeat; background-size: 100% 38%; background-position: 0 88%;
         padding: 0 0.1em;
     }
-    .hero-tag {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.78rem;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--graphite);
-    }
-    .hero-sub {
-        color: var(--graphite);
-        font-size: 1.02rem;
-        margin: 0.35rem 0 1.6rem 0;
-        max-width: 40rem;
-    }
+    .hero-tag { font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--graphite); }
+    .hero-sub { color: var(--graphite); font-size: 1.02rem; margin: 0.35rem 0 1.6rem 0; max-width: 40rem; }
     .hero-rule { border: none; border-top: 1px dashed var(--line); margin: 0 0 1.6rem 0; }
 
-    /* ---- Chat cards ---- */
     .msg-row { display: flex; margin-bottom: 1.1rem; animation: fadein 0.25s ease-out; }
     .msg-row.user { justify-content: flex-end; }
     .msg-row.ai { justify-content: flex-start; }
+    .card { max-width: 70%; padding: 0.9rem 1.15rem; border-radius: 10px; font-size: 0.96rem; line-height: 1.55; box-shadow: 0 1px 3px rgba(28,37,65,0.08); }
+    .card.user { background: var(--ink); color: var(--paper); border-top-right-radius: 2px; }
+    .card.ai { background: var(--paper); color: var(--ink); border-left: 4px solid var(--highlighter); border-top-left-radius: 2px; }
+    .card-label { font-family: 'IBM Plex Mono', monospace; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.6; margin-bottom: 0.35rem; display: block; }
 
-    .card {
-        max-width: 70%;
-        padding: 0.9rem 1.15rem;
-        border-radius: 10px;
-        font-size: 0.96rem;
-        line-height: 1.55;
-        box-shadow: 0 1px 3px rgba(28,37,65,0.08);
-    }
-    .card.user {
-        background: var(--ink);
-        color: var(--paper);
-        border-top-right-radius: 2px;
-    }
-    .card.ai {
-        background: var(--paper);
-        color: var(--ink);
-        border-left: 4px solid var(--highlighter);
-        border-top-left-radius: 2px;
-    }
-    .card-label {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.65rem;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        opacity: 0.6;
-        margin-bottom: 0.35rem;
-        display: block;
-    }
-
-    /* ---- Citation flags ---- */
     .flags { margin: 0.5rem 0 0 0.1rem; }
-    .flag {
-        display: inline-block;
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.68rem;
-        background: var(--highlighter);
-        color: var(--ink);
-        border-radius: 3px;
-        padding: 0.12rem 0.4rem;
-        margin-right: 0.3rem;
-        font-weight: 500;
-    }
+    .flag { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; background: var(--highlighter); color: var(--ink); border-radius: 3px; padding: 0.12rem 0.4rem; margin-right: 0.3rem; font-weight: 500; }
 
     @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-    /* ---- Chat input ---- */
-    [data-testid="stChatInput"] {
-        background: var(--paper);
-        border: 1px solid var(--line);
-        border-radius: 10px;
-    }
-
-    /* ---- Expander (sources) ---- */
-    [data-testid="stExpander"] {
-        background: var(--paper);
-        border: 1px dashed var(--line);
-        border-radius: 8px;
-    }
+    [data-testid="stChatInput"] { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; }
+    [data-testid="stExpander"] { background: var(--paper); border: 1px dashed var(--line); border-radius: 8px; }
     [data-testid="stExpander"] summary { font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; }
 
-    /* ---- Empty state ---- */
-    .empty-state {
-        border: 1px dashed var(--line);
-        border-radius: 10px;
-        padding: 2.2rem;
-        text-align: center;
-        color: var(--graphite);
-        background: rgba(255,253,247,0.5);
-    }
+    .empty-state { border: 1px dashed var(--line); border-radius: 10px; padding: 2.2rem; text-align: center; color: var(--graphite); background: rgba(255,253,247,0.5); }
     .empty-state .glyph { font-size: 1.8rem; margin-bottom: 0.4rem; }
+
+    .lib-item {
+        font-family: 'IBM Plex Mono', monospace; font-size: 0.72rem; color: #B9B190 !important;
+        padding: 0.25rem 0; border-bottom: 1px dashed rgba(237,231,211,0.15);
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -186,7 +103,7 @@ st.markdown(
 # Cached resources
 # ---------------------------------------------------------------------------
 
-@st.cache_resource(show_spinner="Reading your course material...")
+@st.cache_resource(show_spinner="Opening your notes...")
 def load_vector_store(persist_directory: str):
     embedding_model = MistralAIEmbeddings()
     return Chroma(persist_directory=persist_directory, embedding_function=embedding_model)
@@ -212,13 +129,42 @@ def get_prompt():
     )
 
 
+def ingest_pdf(uploaded_file, vector_store, chunk_size=1000, chunk_overlap=200) -> int:
+    """Save an uploaded PDF to disk, split it, and add it to the vector store."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(uploaded_file.getvalue())
+        tmp_path = tmp.name
+    try:
+        pages = PyPDFLoader(tmp_path).load()
+        splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        chunks = splitter.split_documents(pages)
+        for chunk in chunks:
+            chunk.metadata["source"] = uploaded_file.name
+        if chunks:
+            vector_store.add_documents(chunks)
+        return len(chunks)
+    finally:
+        os.remove(tmp_path)
+
+
+def list_indexed_sources(vector_store):
+    """Return the distinct filenames currently indexed, and total chunk count."""
+    try:
+        data = vector_store.get(include=["metadatas"])
+        metadatas = data.get("metadatas") or []
+        sources = sorted({m.get("source", "unknown") for m in metadatas if m})
+        return sources, len(metadatas)
+    except Exception:
+        return [], 0
+
+
 # ---------------------------------------------------------------------------
-# Sidebar — Study Settings
+# Sidebar
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
     st.markdown("## Study Settings")
-    st.caption("Point CourseMate at your notes and tune how it searches them.")
+    st.caption("Add your course material and tune how CourseMate searches it.")
     st.markdown("---")
 
     persist_directory = st.text_input("Notes folder (Chroma DB)", value="chroma_db")
@@ -227,6 +173,39 @@ with st.sidebar:
         options=["mistral-small-2506", "mistral-large-latest", "mistral-medium-latest"],
         index=0,
     )
+
+    vector_store = load_vector_store(persist_directory)
+
+    st.markdown("---")
+    st.markdown("### Upload course material")
+    uploaded_files = st.file_uploader(
+        "Drop PDFs here — lecture notes, slides, readings",
+        type=["pdf"],
+        accept_multiple_files=True,
+    )
+
+    if "ingested_names" not in st.session_state:
+        st.session_state.ingested_names = set()
+
+    if uploaded_files:
+        new_files = [f for f in uploaded_files if f.name not in st.session_state.ingested_names]
+        if new_files:
+            with st.spinner(f"Reading {len(new_files)} file(s)..."):
+                total_chunks = 0
+                for f in new_files:
+                    total_chunks += ingest_pdf(f, vector_store)
+                    st.session_state.ingested_names.add(f.name)
+            st.success(f"Indexed {len(new_files)} file(s) — {total_chunks} passages added.")
+            st.rerun()
+
+    sources, chunk_count = list_indexed_sources(vector_store)
+    if sources:
+        with st.expander(f"Indexed material ({len(sources)} file, {chunk_count} passages)" if len(sources) == 1
+                          else f"Indexed material ({len(sources)} files, {chunk_count} passages)"):
+            for s in sources:
+                st.markdown(f'<div class="lib-item">{s}</div>', unsafe_allow_html=True)
+    else:
+        st.caption("No material indexed yet — upload a PDF to get started.")
 
     st.markdown("---")
     st.markdown("### Search depth")
@@ -252,7 +231,7 @@ st.markdown(
         <p class="hero-title">Course<span class="swipe">Mate</span> AI</p>
         <span class="hero-tag">/ study companion</span>
     </div>
-    <p class="hero-sub">Ask a question, get an answer pulled straight from your course material — nothing invented, nothing outside the text.</p>
+    <p class="hero-sub">Upload your course material and ask a question — every answer is pulled straight from the text, nothing invented.</p>
     <hr class="hero-rule" />
     """,
     unsafe_allow_html=True,
@@ -262,11 +241,10 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 try:
-    vector_store = load_vector_store(persist_directory)
     llm = load_llm(model_name)
     prompt = get_prompt()
 except Exception as e:
-    st.error(f"Couldn't load your course material: {e}")
+    st.error(f"Couldn't load the model: {e}")
     st.stop()
 
 retriever = vector_store.as_retriever(
@@ -280,16 +258,14 @@ retriever = vector_store.as_retriever(
 
 def render_user(text: str):
     st.markdown(
-        f"""<div class="msg-row user"><div class="card user">
-        <span class="card-label">You</span>{text}</div></div>""",
+        f'<div class="msg-row user"><div class="card user"><span class="card-label">You</span>{text}</div></div>',
         unsafe_allow_html=True,
     )
 
 
 def render_ai(text: str, sources: list[str] | None = None):
     st.markdown(
-        f"""<div class="msg-row ai"><div class="card ai">
-        <span class="card-label">CourseMate</span>{text}</div></div>""",
+        f'<div class="msg-row ai"><div class="card ai"><span class="card-label">CourseMate</span>{text}</div></div>',
         unsafe_allow_html=True,
     )
     if sources:
@@ -304,16 +280,29 @@ def render_ai(text: str, sources: list[str] | None = None):
 # Conversation
 # ---------------------------------------------------------------------------
 
+no_material = chunk_count == 0
+
 if not st.session_state.messages:
-    st.markdown(
-        """
-        <div class="empty-state">
-            <div class="glyph">📖</div>
-            <div>No questions yet — ask something about your course material to get started.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    if no_material:
+        st.markdown(
+            """
+            <div class="empty-state">
+                <div class="glyph">📎</div>
+                <div>Nothing indexed yet — upload a PDF from the sidebar to start asking questions.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div class="empty-state">
+                <div class="glyph">📖</div>
+                <div>No questions yet — ask something about your course material to get started.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 else:
     for msg in st.session_state.messages:
         if msg["role"] == "user":
@@ -321,7 +310,10 @@ else:
         else:
             render_ai(msg["content"], msg.get("sources") if show_sources else None)
 
-query = st.chat_input("Ask about your course material...")
+query = st.chat_input(
+    "Ask about your course material..." if not no_material else "Upload a PDF first to ask questions",
+    disabled=no_material,
+)
 
 if query:
     st.session_state.messages.append({"role": "user", "content": query})
