@@ -1,6 +1,6 @@
 import os
 import tempfile
-
+import shutil
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
@@ -416,13 +416,10 @@ with st.sidebar:
             st.rerun()
     with col2:
     if st.button("Reset archive"):
-        import shutil
-        import os
-
         try:
             shutil.rmtree(PERSIST_DIR, ignore_errors=True)
-        except:
-            pass
+            except:
+                pass
 
         os.makedirs(PERSIST_DIR, exist_ok=True)
 
