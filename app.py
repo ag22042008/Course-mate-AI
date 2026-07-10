@@ -173,6 +173,15 @@ st.markdown(
         padding: 0.4rem 0.6rem;
         margin-bottom: 0.6rem;
     }
+    [data-testid="stChatMessage"] p,
+    [data-testid="stChatMessage"] li,
+    [data-testid="stChatMessage"] span,
+    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+        color: var(--charcoal) !important;
+        opacity: 1 !important;
+        font-size: 1rem;
+        line-height: 1.55;
+    }
 
     /* Footnote badges under an answer */
     .marg-footnotes {
