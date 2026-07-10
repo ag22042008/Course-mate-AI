@@ -311,7 +311,7 @@ def index_files(uploaded_files, chunk_size, chunk_overlap):
         return 0
 
     if not os.path.exists(PERSIST_DIR):
-    os.makedirs(PERSIST_DIR)
+        os.makedirs(PERSIST_DIR)
 
 vectorstore = Chroma(
     persist_directory=PERSIST_DIR,
