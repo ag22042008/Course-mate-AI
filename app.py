@@ -420,7 +420,7 @@ with st.sidebar:
             shutil.rmtree(PERSIST_DIR, ignore_errors=True)
             except:
                 pass
-                os.makedirs(PERSIST_DIR, exist_ok=True)
+            os.makedirs(PERSIST_DIR, exist_ok=True)
 
         st.cache_resource.clear()      # <-- ADD THIS
         st.session_state.vectorstore_ready = False
