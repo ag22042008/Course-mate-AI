@@ -2,6 +2,8 @@ streamlit
 langchain
 langchain-mistralai
 langchain-community
-chromadb
+langchain-chroma
+langchain-text-splitters
+chromadb==0.5.23
 python-dotenv
 pypdf
