@@ -6,20 +6,190 @@ from langchain_core.prompts import ChatPromptTemplate
 
 load_dotenv()
 
-st.set_page_config(page_title="RAG Chatbot", page_icon="📄", layout="wide")
+st.set_page_config(page_title="CourseMate AI", page_icon="🎓", layout="wide")
 
 # ---------------------------------------------------------------------------
-# Cached resources — loaded once per session, not on every rerun
+# Visual identity — "annotated textbook" theme
+# Ink Navy sidebar, parchment page, highlighter-yellow accent, mono citation tags
 # ---------------------------------------------------------------------------
 
-@st.cache_resource(show_spinner="Loading embedding model & vector store...")
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+
+    :root {
+        --ink: #1C2541;
+        --parchment: #F6F1E1;
+        --paper: #FFFDF7;
+        --highlighter: #F4D35E;
+        --graphite: #4A4E69;
+        --rust: #C1502E;
+        --line: #E4DBC4;
+    }
+
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+    .stApp { background: var(--parchment); }
+
+    /* ---- Sidebar ---- */
+    [data-testid="stSidebar"] {
+        background: var(--ink);
+        border-right: 1px solid var(--line);
+    }
+    [data-testid="stSidebar"] * { color: #EDE7D3 !important; }
+    [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        font-family: 'Fraunces', serif;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+    }
+    [data-testid="stSidebar"] hr { border-color: rgba(237,231,211,0.15); }
+    [data-testid="stSidebar"] .stSlider label, [data-testid="stSidebar"] .stSelectbox label,
+    [data-testid="stSidebar"] .stTextInput label, [data-testid="stSidebar"] .stCheckbox label {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #B9B190 !important;
+    }
+    [data-testid="stSidebar"] .stButton>button {
+        background: transparent;
+        border: 1px solid #B9B190;
+        color: #EDE7D3 !important;
+        border-radius: 6px;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.8rem;
+    }
+    [data-testid="stSidebar"] .stButton>button:hover {
+        border-color: var(--highlighter);
+        color: var(--highlighter) !important;
+    }
+
+    /* ---- Hero header ---- */
+    .hero-wrap {
+        display: flex;
+        align-items: baseline;
+        gap: 0.6rem;
+        margin-bottom: 0.1rem;
+    }
+    .hero-title {
+        font-family: 'Fraunces', serif;
+        font-weight: 700;
+        font-size: 2.7rem;
+        color: var(--ink);
+        letter-spacing: -0.02em;
+        margin: 0;
+    }
+    .hero-title .swipe {
+        background-image: linear-gradient(var(--highlighter), var(--highlighter));
+        background-repeat: no-repeat;
+        background-size: 100% 38%;
+        background-position: 0 88%;
+        padding: 0 0.1em;
+    }
+    .hero-tag {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--graphite);
+    }
+    .hero-sub {
+        color: var(--graphite);
+        font-size: 1.02rem;
+        margin: 0.35rem 0 1.6rem 0;
+        max-width: 40rem;
+    }
+    .hero-rule { border: none; border-top: 1px dashed var(--line); margin: 0 0 1.6rem 0; }
+
+    /* ---- Chat cards ---- */
+    .msg-row { display: flex; margin-bottom: 1.1rem; animation: fadein 0.25s ease-out; }
+    .msg-row.user { justify-content: flex-end; }
+    .msg-row.ai { justify-content: flex-start; }
+
+    .card {
+        max-width: 70%;
+        padding: 0.9rem 1.15rem;
+        border-radius: 10px;
+        font-size: 0.96rem;
+        line-height: 1.55;
+        box-shadow: 0 1px 3px rgba(28,37,65,0.08);
+    }
+    .card.user {
+        background: var(--ink);
+        color: var(--paper);
+        border-top-right-radius: 2px;
+    }
+    .card.ai {
+        background: var(--paper);
+        color: var(--ink);
+        border-left: 4px solid var(--highlighter);
+        border-top-left-radius: 2px;
+    }
+    .card-label {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.65rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        opacity: 0.6;
+        margin-bottom: 0.35rem;
+        display: block;
+    }
+
+    /* ---- Citation flags ---- */
+    .flags { margin: 0.5rem 0 0 0.1rem; }
+    .flag {
+        display: inline-block;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.68rem;
+        background: var(--highlighter);
+        color: var(--ink);
+        border-radius: 3px;
+        padding: 0.12rem 0.4rem;
+        margin-right: 0.3rem;
+        font-weight: 500;
+    }
+
+    @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ---- Chat input ---- */
+    [data-testid="stChatInput"] {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+    }
+
+    /* ---- Expander (sources) ---- */
+    [data-testid="stExpander"] {
+        background: var(--paper);
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+    }
+    [data-testid="stExpander"] summary { font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; }
+
+    /* ---- Empty state ---- */
+    .empty-state {
+        border: 1px dashed var(--line);
+        border-radius: 10px;
+        padding: 2.2rem;
+        text-align: center;
+        color: var(--graphite);
+        background: rgba(255,253,247,0.5);
+    }
+    .empty-state .glyph { font-size: 1.8rem; margin-bottom: 0.4rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------------------------------------------------------------------------
+# Cached resources
+# ---------------------------------------------------------------------------
+
+@st.cache_resource(show_spinner="Reading your course material...")
 def load_vector_store(persist_directory: str):
     embedding_model = MistralAIEmbeddings()
-    vector_store = Chroma(
-        persist_directory=persist_directory,
-        embedding_function=embedding_model,
-    )
-    return vector_store
+    return Chroma(persist_directory=persist_directory, embedding_function=embedding_model)
 
 
 @st.cache_resource(show_spinner=False)
@@ -37,61 +207,66 @@ def get_prompt():
                 If the answer is not present in the context, say: "I could not find the answer in the document."
                 """,
             ),
-            (
-                "human",
-                """Context:
-{context}
-
-Question:
-{question}
-""",
-            ),
+            ("human", "Context:\n{context}\n\nQuestion:\n{question}\n"),
         ]
     )
 
 
 # ---------------------------------------------------------------------------
-# Sidebar — retriever & model settings
+# Sidebar — Study Settings
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.header("⚙️ Settings")
+    st.markdown("## Study Settings")
+    st.caption("Point CourseMate at your notes and tune how it searches them.")
+    st.markdown("---")
 
-    persist_directory = st.text_input("Chroma persist directory", value="chroma_db")
+    persist_directory = st.text_input("Notes folder (Chroma DB)", value="chroma_db")
     model_name = st.selectbox(
-        "Mistral model",
+        "Model",
         options=["mistral-small-2506", "mistral-large-latest", "mistral-medium-latest"],
         index=0,
     )
 
-    st.subheader("Retriever (MMR)")
-    k = st.slider("k (results returned)", min_value=1, max_value=20, value=10)
-    fetch_k = st.slider("fetch_k (candidates considered)", min_value=10, max_value=200, value=100, step=10)
-    lambda_mult = st.slider("lambda_mult (relevance vs diversity)", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
+    st.markdown("---")
+    st.markdown("### Search depth")
+    k = st.slider("Passages returned", min_value=1, max_value=20, value=10)
+    fetch_k = st.slider("Passages considered", min_value=10, max_value=200, value=100, step=10)
+    lambda_mult = st.slider("Focus vs. variety", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
 
-    show_sources = st.checkbox("Show retrieved source chunks", value=False)
+    st.markdown("---")
+    show_sources = st.checkbox("Show passages behind each answer", value=True)
 
-    if st.button("🗑️ Clear chat history"):
+    st.markdown("---")
+    if st.button("Clear conversation"):
         st.session_state.messages = []
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# Main chat UI
+# Hero
 # ---------------------------------------------------------------------------
 
-st.title("📄 RAG Chatbot")
-st.caption("Ask questions about your document — answers are grounded only in the retrieved context.")
+st.markdown(
+    """
+    <div class="hero-wrap">
+        <p class="hero-title">Course<span class="swipe">Mate</span> AI</p>
+        <span class="hero-tag">/ study companion</span>
+    </div>
+    <p class="hero-sub">Ask a question, get an answer pulled straight from your course material — nothing invented, nothing outside the text.</p>
+    <hr class="hero-rule" />
+    """,
+    unsafe_allow_html=True,
+)
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Load resources (cached — cheap after first run)
 try:
     vector_store = load_vector_store(persist_directory)
     llm = load_llm(model_name)
     prompt = get_prompt()
 except Exception as e:
-    st.error(f"Failed to initialize RAG pipeline: {e}")
+    st.error(f"Couldn't load your course material: {e}")
     st.stop()
 
 retriever = vector_store.as_retriever(
@@ -99,40 +274,67 @@ retriever = vector_store.as_retriever(
     search_kwargs={"k": k, "fetch_k": fetch_k, "lambda_mult": lambda_mult},
 )
 
-# Replay chat history
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if msg["role"] == "assistant" and msg.get("sources"):
-            with st.expander("📚 Sources used"):
-                for i, src in enumerate(msg["sources"], start=1):
-                    st.markdown(f"**Chunk {i}**")
-                    st.text(src)
+# ---------------------------------------------------------------------------
+# Rendering helpers
+# ---------------------------------------------------------------------------
 
-# Chat input
-query = st.chat_input("Enter your question...")
+def render_user(text: str):
+    st.markdown(
+        f"""<div class="msg-row user"><div class="card user">
+        <span class="card-label">You</span>{text}</div></div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_ai(text: str, sources: list[str] | None = None):
+    st.markdown(
+        f"""<div class="msg-row ai"><div class="card ai">
+        <span class="card-label">CourseMate</span>{text}</div></div>""",
+        unsafe_allow_html=True,
+    )
+    if sources:
+        flags_html = "".join(f'<span class="flag">Passage {i}</span>' for i in range(1, len(sources) + 1))
+        st.markdown(f'<div class="flags">{flags_html}</div>', unsafe_allow_html=True)
+        with st.expander("View passages behind this answer"):
+            for i, src in enumerate(sources, start=1):
+                st.markdown(f"**Passage {i}**")
+                st.text(src)
+
+# ---------------------------------------------------------------------------
+# Conversation
+# ---------------------------------------------------------------------------
+
+if not st.session_state.messages:
+    st.markdown(
+        """
+        <div class="empty-state">
+            <div class="glyph">📖</div>
+            <div>No questions yet — ask something about your course material to get started.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+else:
+    for msg in st.session_state.messages:
+        if msg["role"] == "user":
+            render_user(msg["content"])
+        else:
+            render_ai(msg["content"], msg.get("sources") if show_sources else None)
+
+query = st.chat_input("Ask about your course material...")
 
 if query:
     st.session_state.messages.append({"role": "user", "content": query})
-    with st.chat_message("user"):
-        st.markdown(query)
+    render_user(query)
 
-    with st.chat_message("assistant"):
-        with st.spinner("Retrieving context and generating answer..."):
-            docs = retriever.invoke(query)
-            context = "\n\n".join(doc.page_content for doc in docs)
+    with st.spinner("Searching your notes..."):
+        docs = retriever.invoke(query)
+        context = "\n\n".join(doc.page_content for doc in docs)
+        final_prompt = prompt.invoke({"context": context, "question": query})
+        response = llm.invoke(final_prompt)
 
-            final_prompt = prompt.invoke({"context": context, "question": query})
-            response = llm.invoke(final_prompt)
-
-        st.markdown(response.content)
-
-        sources = [doc.page_content for doc in docs]
-        if show_sources and sources:
-            with st.expander("📚 Sources used"):
-                for i, src in enumerate(sources, start=1):
-                    st.markdown(f"**Chunk {i}**")
-                    st.text(src)
+    sources = [doc.page_content for doc in docs]
+    render_ai(response.content, sources if show_sources else None)
 
     st.session_state.messages.append(
         {"role": "assistant", "content": response.content, "sources": sources}
