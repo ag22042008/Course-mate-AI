@@ -11,7 +11,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 load_dotenv()
 
-st.set_page_config(page_title="The Reading Room", page_icon="📚", layout="wide")
+st.set_page_config(page_title="CourseMate AI", page_icon="📚", layout="wide")
 
 PERSIST_DIR = "chroma_db"
 
@@ -246,6 +246,20 @@ div[data-testid="stChatInput"] textarea {
     font-family: 'Inter', sans-serif !important;
 }
 
+.rr-project-tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--chalk);
+    background: var(--brass);
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 2px;
+    margin-bottom: 10px;
+}
+
 .rr-rule { border: none; border-top: 1px dashed rgba(176,141,87,0.3); margin: 18px 0; }
 
 .rr-empty {
@@ -405,6 +419,7 @@ with st.sidebar:
             st.rerun()
 
 # ---------------- Header ----------------
+st.markdown('<div class="rr-project-tag">CourseMate AI</div>', unsafe_allow_html=True)
 st.markdown(
     """
 <div class="rr-header">
