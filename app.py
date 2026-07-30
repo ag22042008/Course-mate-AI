@@ -383,9 +383,14 @@ def process_documents(uploaded_files, urls, chunk_size, chunk_overlap):
     Load, split, embed and persist any combination of uploaded PDFs and/or
     URLs into Chroma. Either argument may be empty — pass PDFs only, URLs
     only, or both together in a single call.
+
+    Returns (added, skipped) where skipped items carry a human-readable
+    reason, so a failure like "this PDF has no extractable text" is visible
+    instead of a generic "nothing was added".
     """
     splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     added = []
+    skipped = []
 
     # --- PDFs ---------------------------------------------------------------
     for uploaded_file in uploaded_files or []:
@@ -396,9 +401,21 @@ def process_documents(uploaded_files, urls, chunk_size, chunk_overlap):
         try:
             loader = PyPDFLoader(tmp_path)
             docs = loader.load()
-            chunks = splitter.split_documents(docs)
-        finally:
+        except Exception as e:
+            skipped.append({"name": uploaded_file.name, "reason": f"could not read the PDF ({e})"})
             os.remove(tmp_path)
+            continue
+        os.remove(tmp_path)
+
+        total_chars = sum(len(d.page_content.strip()) for d in docs)
+        if not docs or total_chars == 0:
+            skipped.append({
+                "name": uploaded_file.name,
+                "reason": "no extractable text found — this is likely a scanned/image-only PDF and needs OCR first",
+            })
+            continue
+
+        chunks = splitter.split_documents(docs)
 
         # tag with a friendly source name so citations show the real filename
         for c in chunks:
@@ -408,6 +425,8 @@ def process_documents(uploaded_files, urls, chunk_size, chunk_overlap):
         if chunks:
             _add_chunks_to_store(chunks)
             added.append({"name": uploaded_file.name, "type": "pdf", "chunks": len(chunks)})
+        else:
+            skipped.append({"name": uploaded_file.name, "reason": "text was extracted but produced no chunks after splitting"})
 
     # --- URLs -----------------------------------------------------------------
     if urls:
@@ -415,7 +434,7 @@ def process_documents(uploaded_files, urls, chunk_size, chunk_overlap):
             loader = WebBaseLoader(urls)
             web_docs = loader.load()
         except Exception as e:
-            st.error(f"Could not load one or more URLs: {e}")
+            skipped.append({"name": ", ".join(urls), "reason": f"could not load the URL(s) ({e})"})
             web_docs = []
 
         if web_docs:
@@ -430,8 +449,10 @@ def process_documents(uploaded_files, urls, chunk_size, chunk_overlap):
                     counts[c.metadata.get("source", "unknown")] += 1
                 for src, count in counts.items():
                     added.append({"name": src, "type": "url", "chunks": count})
+            else:
+                skipped.append({"name": ", ".join(urls), "reason": "page loaded but produced no usable text"})
 
-    return added
+    return added, skipped
 
 
 def clear_database():
@@ -552,11 +573,13 @@ with st.sidebar:
         else:
             with st.spinner("Reading and indexing..."):
                 try:
-                    added = process_documents(uploaded_files, urls, chunk_size, chunk_overlap)
+                    added, skipped = process_documents(uploaded_files, urls, chunk_size, chunk_overlap)
                     st.session_state.processed_files.extend(added)
                     if added:
                         st.success(f"Indexed {len(added)} item(s).")
-                    else:
+                    for s in skipped:
+                        st.error(f"**{s['name']}** — {s['reason']}")
+                    if not added and not skipped:
                         st.warning("Nothing was added — check the source and try again.")
                 except Exception as e:
                     st.error(f"Could not process: {e}")
