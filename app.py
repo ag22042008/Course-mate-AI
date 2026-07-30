@@ -313,8 +313,6 @@ if "messages" not in st.session_state:
     st.session_state.messages = []  # each: {role, content, sources (optional)}
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = []  # list of {"name", "type", "chunks"}
-if "pending_suggestion" not in st.session_state:
-    st.session_state.pending_suggestion = None
 
 
 @st.cache_resource(show_spinner=False)
@@ -645,11 +643,9 @@ with st.sidebar:
 # Main
 # ---------------------------------------------------------------------------
 
-# Capture a suggestion click from the previous run before anything else renders
+# A suggestion click sets this directly and is answered in this same run —
+# no extra rerun round-trip needed.
 active_query = None
-if st.session_state.pending_suggestion:
-    active_query = st.session_state.pending_suggestion
-    st.session_state.pending_suggestion = None
 
 st.markdown(
     """
@@ -695,8 +691,7 @@ else:
         for i, question in enumerate(SUGGESTED_QUESTIONS):
             with cols[i % 3]:
                 if st.button(question, use_container_width=True, key=f"suggest_{i}"):
-                    st.session_state.pending_suggestion = question
-                    st.rerun()
+                    active_query = question
 
     for msg in st.session_state.messages:
         avatar = "🧭" if msg["role"] == "user" else "🖋️"
