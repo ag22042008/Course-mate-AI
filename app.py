@@ -699,13 +699,15 @@ else:
         cols = st.columns(3)
         for i, question in enumerate(SUGGESTED_QUESTIONS):
             with cols[i % 3]:
-                st.button(
+                clicked = st.button(
                     question,
                     use_container_width=True,
                     key=f"suggest_{i}",
                     on_click=_set_active_suggestion,
                     args=(question,),
                 )
+                if clicked:
+                    active_query = question
 
     for msg in st.session_state.messages:
         avatar = "🧭" if msg["role"] == "user" else "🖋️"
