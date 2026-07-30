@@ -49,196 +49,275 @@ Question:
 )
 
 # ---------------------------------------------------------------------------
-# Theme — "Marginalia": answers as margin notes on your own document
+# Theme — "The Index": a research desk, not a chat app
 # ---------------------------------------------------------------------------
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
     :root {
-        --ink: #1C2B4A;
-        --parchment: #F7F2E9;
-        --brass: #A9814B;
-        --brass-dark: #8C6A3D;
-        --charcoal: #2A2A28;
-        --slate: #64707D;
-        --rule: #D9CFBB;
+        --paper: #F3ECDD;
+        --card: #FFFDF7;
+        --ink: #23201B;
+        --ink-soft: #6B6355;
+        --rust: #BB4430;
+        --rust-soft: rgba(187,68,48,0.1);
+        --sage: #5C7A5A;
+        --sage-soft: rgba(92,122,90,0.12);
+        --line: #D8CBAA;
     }
 
-    [data-testid="stAppViewContainer"] {
-        background-color: var(--parchment);
-    }
-
-    [data-testid="stHeader"] {
-        background-color: transparent;
-    }
-
+    [data-testid="stAppViewContainer"] { background-color: var(--paper); }
+    [data-testid="stHeader"] { background-color: transparent; }
     html, body, [class*="css"] {
-        font-family: 'Source Sans 3', sans-serif;
-        color: var(--charcoal);
+        font-family: 'IBM Plex Sans', sans-serif;
+        color: var(--ink);
     }
+    /* tighten default top padding */
+    .block-container { padding-top: 2.2rem; }
 
-    /* Sidebar = "The Archive" */
+    /* ---------- Sidebar: "The Desk" ---------- */
     [data-testid="stSidebar"] {
-        background-color: var(--ink);
-        color: var(--parchment);
+        background-color: var(--card);
+        border-right: 1px solid var(--line);
     }
-    [data-testid="stSidebar"] * {
-        color: var(--parchment) !important;
+    [data-testid="stSidebar"] * { color: var(--ink) !important; }
+    .idx-desk-title {
+        font-family: 'Newsreader', serif;
+        font-size: 1.3rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        margin-bottom: 0.15rem;
     }
-    [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-        font-family: 'Fraunces', serif;
-        letter-spacing: 0.03em;
+    .idx-desk-sub {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.72rem;
+        color: var(--ink-soft) !important;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 1rem;
     }
-    [data-testid="stSidebar"] hr {
-        border-color: rgba(247,242,233,0.25);
+    [data-testid="stSidebar"] hr { border-color: var(--line); }
+
+    /* Tabs (PDF / URL input) */
+    [data-testid="stSidebar"] .stTabs [data-baseweb="tab-list"] {
+        gap: 4px;
+        border-bottom: 1px solid var(--line);
+    }
+    [data-testid="stSidebar"] .stTabs [data-baseweb="tab"] {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--ink-soft) !important;
+        padding: 0.4rem 0.6rem;
+    }
+    [data-testid="stSidebar"] .stTabs [aria-selected="true"] {
+        color: var(--rust) !important;
+        border-bottom: 2px solid var(--rust);
     }
 
     /* Hero */
-    .marg-hero-title {
-        font-family: 'Fraunces', serif;
-        font-size: 2.6rem;
+    .idx-hero-eyebrow {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.75rem;
+        color: var(--rust);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        margin-bottom: 0.3rem;
+    }
+    .idx-hero-title {
+        font-family: 'Newsreader', serif;
+        font-size: 2.7rem;
         font-weight: 600;
         color: var(--ink);
-        margin-bottom: 0.1rem;
+        margin-bottom: 0.2rem;
         letter-spacing: -0.01em;
+        line-height: 1.1;
     }
-    .marg-hero-sub {
-        font-family: 'Source Sans 3', sans-serif;
-        color: var(--slate);
+    .idx-hero-sub {
+        color: var(--ink-soft);
         font-size: 1.02rem;
-        margin-bottom: 1.6rem;
-        border-left: 3px solid var(--brass);
-        padding-left: 0.7rem;
+        margin-bottom: 1.4rem;
+        max-width: 46rem;
     }
 
-    /* Catalog entries in the sidebar */
-    .marg-catalog-entry {
-        border: 1px solid rgba(247,242,233,0.25);
-        border-left: 3px solid var(--brass);
-        padding: 0.5rem 0.7rem;
-        margin-bottom: 0.5rem;
-        border-radius: 2px;
-        font-size: 0.88rem;
+    /* Stat strip */
+    .idx-stats { display: flex; gap: 0.9rem; margin-bottom: 1.6rem; flex-wrap: wrap; }
+    .idx-stat {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0.55rem 0.9rem;
+        min-width: 8.5rem;
     }
-    .marg-catalog-num {
-        font-family: 'JetBrains Mono', monospace;
-        color: var(--brass);
-        font-size: 0.75rem;
-        display: block;
-        margin-bottom: 0.15rem;
-    }
-    .marg-catalog-name {
+    .idx-stat-num {
+        font-family: 'Newsreader', serif;
+        font-size: 1.4rem;
         font-weight: 600;
+        color: var(--ink);
+        line-height: 1;
+    }
+    .idx-stat-label {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.68rem;
+        color: var(--ink-soft);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-top: 0.2rem;
+    }
+
+    /* ---------- Index cards (catalog entries) ---------- */
+    .idx-card {
+        position: relative;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        padding: 0.65rem 0.75rem 0.55rem 0.75rem;
+        margin-bottom: 0.6rem;
+        background-image: repeating-linear-gradient(
+            to bottom, transparent, transparent 20px, var(--line) 20px, var(--line) 21px
+        );
+        background-position: 0 34px;
+    }
+    .idx-card::before {
+        content: "";
+        position: absolute;
+        top: 0; left: 12px; right: 12px;
+        height: 1px;
+        background: repeating-linear-gradient(to right, var(--ink-soft) 0, var(--ink-soft) 3px, transparent 3px, transparent 7px);
+        opacity: 0.4;
+    }
+    .idx-card-num {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.68rem;
+        color: var(--rust);
+        letter-spacing: 0.04em;
+    }
+    .idx-card-stamp {
+        float: right;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--sage);
+        border: 1px solid var(--sage);
+        border-radius: 20px;
+        padding: 0.05rem 0.45rem;
+        transform: rotate(-2deg);
+    }
+    .idx-card-name {
+        font-weight: 600;
+        font-size: 0.9rem;
+        margin-top: 0.2rem;
         word-break: break-word;
     }
-    .marg-catalog-meta {
-        font-family: 'JetBrains Mono', monospace;
-        color: rgba(247,242,233,0.65);
-        font-size: 0.72rem;
-    }
-    .marg-catalog-type {
-        font-family: 'JetBrains Mono', monospace;
+    .idx-card-meta {
+        font-family: 'IBM Plex Mono', monospace;
         font-size: 0.68rem;
-        color: var(--brass);
-        margin-right: 0.35rem;
+        color: var(--ink-soft);
+        margin-top: 0.1rem;
     }
 
-    /* Status pill */
-    .marg-status {
-        display: inline-block;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.78rem;
-        padding: 0.15rem 0.6rem;
+    /* Status pill (bottom of sidebar) */
+    .idx-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.75rem;
+        padding: 0.25rem 0.7rem;
         border-radius: 20px;
-        border: 1px solid var(--brass);
+        border: 1px solid var(--line);
     }
+    .idx-status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 
     /* Buttons */
     .stButton>button {
-        background-color: var(--brass);
-        color: var(--parchment);
+        background-color: var(--rust);
+        color: var(--card) !important;
         border: none;
         border-radius: 3px;
-        font-family: 'Source Sans 3', sans-serif;
+        font-family: 'IBM Plex Sans', sans-serif;
         font-weight: 600;
-        transition: background-color 0.15s ease;
+        font-size: 0.9rem;
+        transition: opacity 0.15s ease;
     }
-    .stButton>button:hover {
-        background-color: var(--brass-dark);
-        color: var(--parchment);
-    }
-    .stButton>button:disabled {
-        background-color: rgba(169,129,79,0.3);
-        color: rgba(247,242,233,0.5);
+    .stButton>button:hover { opacity: 0.88; color: var(--card) !important; }
+    .stButton>button:disabled { background-color: rgba(187,68,48,0.25); }
+    [data-testid="stSidebar"] .stButton>button * { color: var(--card) !important; }
+
+    /* Secondary (housekeeping) buttons */
+    [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] .stButton>button {
+        background-color: var(--ink);
     }
 
     /* Chat messages */
     [data-testid="stChatMessage"] {
-        background-color: #FFFFFF;
-        border: 1px solid var(--rule);
-        border-left: 3px solid var(--brass);
+        background-color: var(--card);
+        border: 1px solid var(--line);
         border-radius: 4px;
-        padding: 0.4rem 0.6rem;
-        margin-bottom: 0.6rem;
+        padding: 0.5rem 0.75rem;
+        margin-bottom: 0.7rem;
     }
     [data-testid="stChatMessage"] p,
     [data-testid="stChatMessage"] li,
     [data-testid="stChatMessage"] span,
     [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
-        color: var(--charcoal) !important;
+        color: var(--ink) !important;
         opacity: 1 !important;
         font-size: 1rem;
         line-height: 1.55;
     }
 
     /* Footnote badges under an answer */
-    .marg-footnotes {
-        margin-top: 0.5rem;
-        padding-top: 0.4rem;
-        border-top: 1px dashed var(--rule);
-    }
-    .marg-footnote-label {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.72rem;
-        color: var(--slate);
+    .idx-footnotes { margin-top: 0.5rem; padding-top: 0.4rem; border-top: 1px dashed var(--line); }
+    .idx-footnote-label {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.7rem;
+        color: var(--ink-soft);
         margin-right: 0.4rem;
         text-transform: uppercase;
         letter-spacing: 0.05em;
     }
-    .marg-badge {
+    .idx-badge {
         display: inline-block;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.75rem;
-        background-color: var(--parchment);
-        border: 1px solid var(--brass);
-        color: var(--brass-dark);
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.74rem;
+        background-color: var(--rust-soft);
+        border: 1px solid var(--rust);
+        color: var(--rust);
         padding: 0.05rem 0.5rem;
         border-radius: 20px;
         margin-right: 0.3rem;
         margin-bottom: 0.3rem;
     }
-    .marg-no-answer {
-        font-family: 'JetBrains Mono', monospace;
+    .idx-no-answer {
+        font-family: 'IBM Plex Mono', monospace;
         font-size: 0.75rem;
-        color: var(--slate);
+        color: var(--ink-soft);
         font-style: italic;
     }
 
     /* Empty state */
-    .marg-empty {
-        border: 1px dashed var(--brass);
+    .idx-empty {
+        border: 1px dashed var(--rust);
         border-radius: 4px;
-        padding: 1.4rem;
+        padding: 2rem 1.4rem;
         text-align: center;
-        color: var(--slate);
-        font-family: 'Source Sans 3', sans-serif;
-        background-color: rgba(169,129,79,0.05);
+        color: var(--ink-soft);
+        background-color: rgba(187,68,48,0.04);
     }
-    .marg-empty-title {
-        font-family: 'Fraunces', serif;
-        font-size: 1.2rem;
+    .idx-empty-mark {
+        font-family: 'Newsreader', serif;
+        font-size: 2rem;
+        color: var(--rust);
+        margin-bottom: 0.3rem;
+    }
+    .idx-empty-title {
+        font-family: 'Newsreader', serif;
+        font-size: 1.25rem;
         color: var(--ink);
         margin-bottom: 0.3rem;
     }
@@ -436,69 +515,76 @@ def answer_question(query: str):
 # Sidebar — "The Archive"
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.markdown("## 🗂️ The Archive")
-    st.caption("Add PDFs, URLs, or both — mix and match, then catalogue them together.")
+    st.markdown('<div class="idx-desk-title">The Desk</div>', unsafe_allow_html=True)
+    st.markdown('<div class="idx-desk-sub">Add sources · then ask</div>', unsafe_allow_html=True)
 
-    uploaded_files = st.file_uploader(
-        "PDF(s)", type=["pdf"], accept_multiple_files=True, label_visibility="visible"
-    )
+    tab_pdf, tab_url = st.tabs(["📄 PDF", "🌐 URL"])
 
-    url_text = st.text_area(
-        "URL(s) — one per line",
-        placeholder="https://example.com/article\nhttps://example.com/docs",
-        height=100,
-    )
+    with tab_pdf:
+        uploaded_files = st.file_uploader(
+            "Drop PDF file(s)", type=["pdf"], accept_multiple_files=True,
+            label_visibility="collapsed",
+        )
+        pdf_clicked = st.button("Catalogue PDF(s)", use_container_width=True, key="pdf_go")
 
-    process_clicked = st.button("📥 Catalogue", use_container_width=True)
+    with tab_url:
+        url_text = st.text_area(
+            "One URL per line",
+            placeholder="https://example.com/article\nhttps://example.com/docs",
+            height=110,
+            label_visibility="collapsed",
+        )
+        url_clicked = st.button("Catalogue URL(s)", use_container_width=True, key="url_go")
 
-    if process_clicked:
-        urls = [u.strip() for u in url_text.splitlines() if u.strip()]
-        if not uploaded_files and not urls:
-            st.warning("Add at least one PDF or URL first.")
+    if pdf_clicked or url_clicked:
+        urls = [u.strip() for u in url_text.splitlines() if u.strip()] if url_clicked else []
+        files = uploaded_files if pdf_clicked else []
+        if not files and not urls:
+            st.warning("Nothing to add — choose a PDF or paste a URL first.")
         else:
             with st.spinner("Reading and indexing..."):
                 try:
-                    added = process_documents(uploaded_files, urls)
+                    added = process_documents(files, urls)
                     st.session_state.processed_files.extend(added)
                     if added:
                         st.success(f"Catalogued {len(added)} item(s).")
                     else:
-                        st.warning("Nothing was added — check the PDFs/URLs and try again.")
+                        st.warning("Nothing was added — check the source and try again.")
                 except Exception as e:
                     st.error(f"Could not process: {e}")
 
     st.divider()
-    st.markdown("### Catalog")
+    st.markdown("**Catalog**")
     if st.session_state.processed_files:
         for i, f in enumerate(st.session_state.processed_files, start=1):
-            tag = "🌐 URL" if f.get("type") == "url" else "📄 PDF"
+            tag = "URL" if f.get("type") == "url" else "PDF"
             st.markdown(
                 f"""
-                <div class="marg-catalog-entry">
-                    <span class="marg-catalog-num">No. {i:03d}</span>
-                    <span class="marg-catalog-type">{tag}</span>
-                    <span class="marg-catalog-name">{f['name']}</span><br/>
-                    <span class="marg-catalog-meta">{f['chunks']} passages indexed</span>
+                <div class="idx-card">
+                    <span class="idx-card-stamp">indexed</span>
+                    <span class="idx-card-num">{i:03d} · {tag}</span>
+                    <div class="idx-card-name">{f['name']}</div>
+                    <div class="idx-card-meta">{f['chunks']} passages</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
     else:
-        st.caption("The archive is empty.")
+        st.caption("Nothing catalogued yet.")
 
     st.divider()
-    st.markdown("### Housekeeping")
+    st.markdown("**Housekeeping**")
 
     if st.button("Clear conversation", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
 
     confirm_wipe = st.checkbox("Confirm permanent deletion of all catalogued documents")
-    if st.button("🗑️ Clear entire archive", use_container_width=True, disabled=not confirm_wipe):
+    if st.button("Clear entire archive", use_container_width=True, disabled=not confirm_wipe):
         with st.spinner("Clearing the archive..."):
             try:
                 clear_database()
-                st.success("Archive cleared. Add a new document to begin again.")
+                st.success("Archive cleared. Add a new source to begin again.")
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not clear: {e}")
@@ -506,8 +592,10 @@ with st.sidebar:
     st.divider()
     ready = st.session_state.vectorstore is not None
     status_label = "Ready" if ready else "Empty"
+    dot_color = "#5C7A5A" if ready else "#BB4430"
     st.markdown(
-        f'<span class="marg-status">● {status_label}</span>',
+        f'<span class="idx-status"><span class="idx-status-dot" '
+        f'style="background:{dot_color}"></span>{status_label}</span>',
         unsafe_allow_html=True,
     )
 
