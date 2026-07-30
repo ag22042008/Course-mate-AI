@@ -1,11 +1,15 @@
 import os
+
+os.environ.setdefault("USER_AGENT", "coursemate-ai/1.0")
+
 import shutil
 import tempfile
+from collections import defaultdict
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader, WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_mistralai import MistralAIEmbeddings, ChatMistralAI
 from langchain_community.vectorstores import Chroma
@@ -134,6 +138,12 @@ st.markdown(
         color: rgba(247,242,233,0.65);
         font-size: 0.72rem;
     }
+    .marg-catalog-type {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.68rem;
+        color: var(--brass);
+        margin-right: 0.35rem;
+    }
 
     /* Status pill */
     .marg-status {
@@ -207,6 +217,7 @@ st.markdown(
         padding: 0.05rem 0.5rem;
         border-radius: 20px;
         margin-right: 0.3rem;
+        margin-bottom: 0.3rem;
     }
     .marg-no-answer {
         font-family: 'JetBrains Mono', monospace;
@@ -242,9 +253,9 @@ st.markdown(
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
 if "messages" not in st.session_state:
-    st.session_state.messages = []  # each: {role, content, pages (optional)}
+    st.session_state.messages = []  # each: {role, content, sources (optional)}
 if "processed_files" not in st.session_state:
-    st.session_state.processed_files = []  # list of {"name", "chunks"}
+    st.session_state.processed_files = []  # list of {"name", "type", "chunks"}
 
 
 @st.cache_resource(show_spinner=False)
@@ -290,12 +301,35 @@ if st.session_state.vectorstore is None:
     st.session_state.vectorstore = load_existing_vectorstore()
 
 
-def process_pdfs(uploaded_files):
-    """Load, split, embed and persist the uploaded PDFs into Chroma."""
+def _add_chunks_to_store(chunks):
+    """Create the vectorstore on first ingest, or append to it afterwards."""
+    if not chunks:
+        return
+    clear_chroma_system_cache()
+    embedding_model = get_embedding_model()
+
+    if st.session_state.vectorstore is None:
+        st.session_state.vectorstore = Chroma.from_documents(
+            documents=chunks,
+            embedding=embedding_model,
+            persist_directory=PERSIST_DIR,
+            collection_name=COLLECTION_NAME,
+        )
+    else:
+        st.session_state.vectorstore.add_documents(chunks)
+
+
+def process_documents(uploaded_files, urls):
+    """
+    Load, split, embed and persist any combination of uploaded PDFs and/or
+    URLs into Chroma. Either argument may be empty — pass PDFs only, URLs
+    only, or both together in a single call.
+    """
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     added = []
 
-    for uploaded_file in uploaded_files:
+    # --- PDFs -------------------------------------------------------------
+    for uploaded_file in uploaded_files or []:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(uploaded_file.getbuffer())
             tmp_path = tmp.name
@@ -307,23 +341,38 @@ def process_pdfs(uploaded_files):
         finally:
             os.remove(tmp_path)
 
-        if not chunks:
-            continue
+        # tag with a friendly source name so citations show the real filename
+        for c in chunks:
+            c.metadata["source"] = uploaded_file.name
+            c.metadata["doc_type"] = "pdf"
 
-        clear_chroma_system_cache()
-        embedding_model = get_embedding_model()
+        if chunks:
+            _add_chunks_to_store(chunks)
+            added.append({"name": uploaded_file.name, "type": "pdf", "chunks": len(chunks)})
 
-        if st.session_state.vectorstore is None:
-            st.session_state.vectorstore = Chroma.from_documents(
-                documents=chunks,
-                embedding=embedding_model,
-                persist_directory=PERSIST_DIR,
-                collection_name=COLLECTION_NAME,
-            )
-        else:
-            st.session_state.vectorstore.add_documents(chunks)
+    # --- URLs ---------------------------------------------------------------
+    if urls:
+        try:
+            loader = WebBaseLoader(urls)
+            web_docs = loader.load()
+        except Exception as e:
+            st.error(f"Could not load one or more URLs: {e}")
+            web_docs = []
 
-        added.append({"name": uploaded_file.name, "chunks": len(chunks)})
+        if web_docs:
+            chunks = splitter.split_documents(web_docs)
+            for c in chunks:
+                c.metadata["doc_type"] = "url"
+
+            if chunks:
+                _add_chunks_to_store(chunks)
+
+                # group chunk counts per URL for the catalog display
+                counts = defaultdict(int)
+                for c in chunks:
+                    counts[c.metadata.get("source", "unknown")] += 1
+                for src, count in counts.items():
+                    added.append({"name": src, "type": "url", "chunks": count})
 
     return added
 
@@ -364,14 +413,23 @@ def answer_question(query: str):
     final_prompt = PROMPT.invoke({"context": context, "question": query})
     response = get_llm().invoke(final_prompt)
 
-    pages = sorted(
-        {
-            doc.metadata.get("page")
-            for doc in docs
-            if doc.metadata.get("page") is not None
-        }
-    )
-    return response.content, pages
+    # Build citation badges: "filename — p.N" for PDFs, bare URL for web pages
+    seen = set()
+    sources = []
+    for doc in docs:
+        source = doc.metadata.get("source")
+        page = doc.metadata.get("page")
+        if source is None:
+            continue
+        if page is not None:
+            label = f"{source} — p.{page + 1}"
+        else:
+            label = source
+        if label not in seen:
+            seen.add(label)
+            sources.append(label)
+
+    return response.content, sources
 
 
 # ---------------------------------------------------------------------------
@@ -379,23 +437,33 @@ def answer_question(query: str):
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("## 🗂️ The Archive")
-    st.caption("Every document you add is catalogued and indexed here.")
+    st.caption("Add PDFs, URLs, or both — mix and match, then catalogue them together.")
 
     uploaded_files = st.file_uploader(
-        "Add document(s)", type=["pdf"], accept_multiple_files=True, label_visibility="visible"
+        "PDF(s)", type=["pdf"], accept_multiple_files=True, label_visibility="visible"
     )
 
-    process_clicked = st.button("📥 Catalogue PDF(s)", use_container_width=True)
+    url_text = st.text_area(
+        "URL(s) — one per line",
+        placeholder="https://example.com/article\nhttps://example.com/docs",
+        height=100,
+    )
+
+    process_clicked = st.button("📥 Catalogue", use_container_width=True)
 
     if process_clicked:
-        if not uploaded_files:
-            st.warning("Choose at least one PDF first.")
+        urls = [u.strip() for u in url_text.splitlines() if u.strip()]
+        if not uploaded_files and not urls:
+            st.warning("Add at least one PDF or URL first.")
         else:
             with st.spinner("Reading and indexing..."):
                 try:
-                    added = process_pdfs(uploaded_files)
+                    added = process_documents(uploaded_files, urls)
                     st.session_state.processed_files.extend(added)
-                    st.success(f"Catalogued {len(added)} document(s).")
+                    if added:
+                        st.success(f"Catalogued {len(added)} item(s).")
+                    else:
+                        st.warning("Nothing was added — check the PDFs/URLs and try again.")
                 except Exception as e:
                     st.error(f"Could not process: {e}")
 
@@ -403,10 +471,12 @@ with st.sidebar:
     st.markdown("### Catalog")
     if st.session_state.processed_files:
         for i, f in enumerate(st.session_state.processed_files, start=1):
+            tag = "🌐 URL" if f.get("type") == "url" else "📄 PDF"
             st.markdown(
                 f"""
                 <div class="marg-catalog-entry">
                     <span class="marg-catalog-num">No. {i:03d}</span>
+                    <span class="marg-catalog-type">{tag}</span>
                     <span class="marg-catalog-name">{f['name']}</span><br/>
                     <span class="marg-catalog-meta">{f['chunks']} passages indexed</span>
                 </div>
@@ -446,8 +516,8 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 st.markdown('<div class="marg-hero-title">CourseMate-Ai</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="marg-hero-sub">Ask questions. Answers stay within what the document actually says — '
-    "and every answer cites the page it came from.</div>",
+    '<div class="marg-hero-sub">Ask questions. Answers stay within what your PDFs and URLs actually say — '
+    "and every answer cites the source it came from.</div>",
     unsafe_allow_html=True,
 )
 
@@ -456,7 +526,7 @@ if st.session_state.vectorstore is None:
         """
         <div class="marg-empty">
             <div class="marg-empty-title">The archive is empty</div>
-            Add a PDF from The Archive panel on the left to start a conversation.
+            Add a PDF and/or a URL from The Archive panel on the left to start a conversation.
         </div>
         """,
         unsafe_allow_html=True,
@@ -466,14 +536,14 @@ for msg in st.session_state.messages:
     avatar = "🧭" if msg["role"] == "user" else "🖋️"
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
-        pages = msg.get("pages")
-        if pages:
-            badges = "".join(f'<span class="marg-badge">p. {p + 1}</span>' for p in pages)
+        sources = msg.get("sources")
+        if sources:
+            badges = "".join(f'<span class="marg-badge">{s}</span>' for s in sources)
             st.markdown(
-                f'<div class="marg-footnotes"><span class="marg-footnote-label">Found on</span>{badges}</div>',
+                f'<div class="marg-footnotes"><span class="marg-footnote-label">Found in</span>{badges}</div>',
                 unsafe_allow_html=True,
             )
-        elif msg["role"] == "assistant" and "pages" in msg:
+        elif msg["role"] == "assistant" and "sources" in msg:
             st.markdown(
                 '<div class="marg-no-answer">No matching passage in the archive.</div>',
                 unsafe_allow_html=True,
@@ -488,20 +558,20 @@ if query:
 
     with st.chat_message("assistant", avatar="🖋️"):
         if st.session_state.vectorstore is None:
-            answer, pages = "Add a document to the archive first.", []
+            answer, sources = "Add a document to the archive first.", []
             st.markdown(answer)
         else:
             with st.spinner("Turning pages..."):
                 try:
-                    answer, pages = answer_question(query)
+                    answer, sources = answer_question(query)
                 except Exception as e:
-                    answer, pages = f"Something went wrong: {e}", []
+                    answer, sources = f"Something went wrong: {e}", []
                 st.markdown(answer)
-                if pages:
-                    badges = "".join(f'<span class="marg-badge">p. {p + 1}</span>' for p in pages)
+                if sources:
+                    badges = "".join(f'<span class="marg-badge">{s}</span>' for s in sources)
                     st.markdown(
-                        f'<div class="marg-footnotes"><span class="marg-footnote-label">Found on</span>{badges}</div>',
+                        f'<div class="marg-footnotes"><span class="marg-footnote-label">Found in</span>{badges}</div>',
                         unsafe_allow_html=True,
                     )
 
-    st.session_state.messages.append({"role": "assistant", "content": answer, "pages": pages})
+    st.session_state.messages.append({"role": "assistant", "content": answer, "sources": sources})
