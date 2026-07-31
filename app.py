@@ -2,6 +2,7 @@ import os
 
 os.environ.setdefault("USER_AGENT", "coursemate-ai/1.0")
 
+import html
 import shutil
 import tempfile
 from collections import defaultdict
@@ -304,6 +305,19 @@ st.markdown(
         margin-bottom: 0.3rem;
     }
     .idx-no-answer { font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem; color: var(--text-dim); font-style: italic; }
+    .idx-passage {
+        background-color: var(--panel-2);
+        border-left: 3px solid var(--gold);
+        border-radius: 4px;
+        padding: 0.6rem 0.8rem;
+        margin: 0.3rem 0 0.9rem 0;
+        font-size: 0.88rem;
+        line-height: 1.5;
+        color: var(--text-dim);
+        max-height: 220px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+    }
 
     /* Bottom chat-input bar */
     [data-testid="stBottom"] > div { background-color: var(--bg); border-top: 1px solid var(--line); }
@@ -502,6 +516,7 @@ def answer_question(query, k, fetch_k, lambda_mult, model_name, temperature):
 
     seen = set()
     sources = []
+    passages = []
     for doc in docs:
         source = doc.metadata.get("source")
         page = doc.metadata.get("page")
@@ -511,8 +526,19 @@ def answer_question(query, k, fetch_k, lambda_mult, model_name, temperature):
         if label not in seen:
             seen.add(label)
             sources.append(label)
+            passages.append({"label": label, "text": doc.page_content})
 
-    return response.content, sources
+    return response.content, sources, passages
+
+
+def render_passages(passages):
+    with st.expander(f"📄 View source passages ({len(passages)})"):
+        for p in passages:
+            st.markdown(f"**{p['label']}**")
+            st.markdown(
+                f'<div class="idx-passage">{html.escape(p["text"])}</div>',
+                unsafe_allow_html=True,
+            )
 
 
 def handle_query(query, k, fetch_k, lambda_mult, model_name, temperature):
@@ -522,14 +548,14 @@ def handle_query(query, k, fetch_k, lambda_mult, model_name, temperature):
 
     with st.chat_message("assistant", avatar="🖋️"):
         if st.session_state.vectorstore is None:
-            answer, sources = "Add a source to the archive first.", []
+            answer, sources, passages = "Add a source to the archive first.", [], []
             st.markdown(answer)
         else:
             with st.spinner("Turning pages..."):
                 try:
-                    answer, sources = answer_question(query, k, fetch_k, lambda_mult, model_name, temperature)
+                    answer, sources, passages = answer_question(query, k, fetch_k, lambda_mult, model_name, temperature)
                 except Exception as e:
-                    answer, sources = f"Something went wrong: {e}", []
+                    answer, sources, passages = f"Something went wrong: {e}", [], []
                 st.markdown(answer)
                 if sources:
                     badges = " ".join(f'<span class="idx-badge">{s}</span>' for s in sources)
@@ -537,8 +563,12 @@ def handle_query(query, k, fetch_k, lambda_mult, model_name, temperature):
                         f'<div class="idx-footnotes"><span class="idx-footnote-label">Found in:</span> {badges}</div>',
                         unsafe_allow_html=True,
                     )
+                if passages:
+                    render_passages(passages)
 
-    st.session_state.messages.append({"role": "assistant", "content": answer, "sources": sources})
+    st.session_state.messages.append(
+        {"role": "assistant", "content": answer, "sources": sources, "passages": passages}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -714,6 +744,8 @@ else:
                 )
             elif msg["role"] == "assistant" and "sources" in msg:
                 st.markdown('<div class="idx-no-answer">No matching passage in the archive.</div>', unsafe_allow_html=True)
+            if msg.get("passages"):
+                render_passages(msg["passages"])
 
     if active_query:
         handle_query(active_query, k, fetch_k, lambda_mult, model_name, temperature)
