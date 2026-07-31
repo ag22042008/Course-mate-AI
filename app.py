@@ -257,6 +257,17 @@ st.markdown(
         color: var(--text);
         margin: 0.4rem 0 0.6rem 0;
     }
+    [data-testid="stExpander"] {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background-color: var(--panel);
+        margin-bottom: 1rem;
+    }
+    [data-testid="stExpander"] summary {
+        font-family: 'IBM Plex Sans', sans-serif;
+        font-weight: 600;
+        color: var(--text) !important;
+    }
 
     /* Chat messages */
     [data-testid="stChatMessage"] {
@@ -313,12 +324,6 @@ if "messages" not in st.session_state:
     st.session_state.messages = []  # each: {role, content, sources (optional)}
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = []  # list of {"name", "type", "chunks"}
-if "active_suggestion" not in st.session_state:
-    st.session_state.active_suggestion = None
-
-
-def _set_active_suggestion(question):
-    st.session_state.active_suggestion = question
 
 
 @st.cache_resource(show_spinner=False)
@@ -648,13 +653,7 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-
-# A suggestion click sets st.session_state.active_suggestion via its on_click
-# callback; pick it up here and answer it in this same run.
 active_query = None
-if st.session_state.active_suggestion:
-    active_query = st.session_state.active_suggestion
-    st.session_state.active_suggestion = None
 
 st.markdown(
     """
@@ -694,20 +693,13 @@ if st.session_state.vectorstore is None:
         unsafe_allow_html=True,
     )
 else:
-    if not st.session_state.messages and active_query is None:
-        st.markdown('<div class="idx-suggest-label">Suggested questions</div>', unsafe_allow_html=True)
+    with st.expander("💡 Suggested questions", expanded=not st.session_state.messages):
         cols = st.columns(3)
         for i, question in enumerate(SUGGESTED_QUESTIONS):
             with cols[i % 3]:
-                clicked = st.button(
-                    question,
-                    use_container_width=True,
-                    key=f"suggest_{i}",
-                    on_click=_set_active_suggestion,
-                    args=(question,),
-                )
-                if clicked:
+                if st.button(question, use_container_width=True, key=f"suggest_{i}"):
                     active_query = question
+
 
     for msg in st.session_state.messages:
         avatar = "🧭" if msg["role"] == "user" else "🖋️"
