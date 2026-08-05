@@ -10,3 +10,5 @@ bs4
 streamlit
 python-dotenv
 pypdf
+streamlit==1.61.0
+starlette<1.4.0
