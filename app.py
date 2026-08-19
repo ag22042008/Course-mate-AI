@@ -1,5 +1,4 @@
 import os
-
 os.environ.setdefault("USER_AGENT", "coursemate-ai/1.0")
 
 import hashlib
@@ -50,6 +49,12 @@ SUGGESTED_QUESTIONS = [
     "What should I remember most?",
 ]
 
+VOICE_MODE_LABELS = {
+    "auto": "Auto-detect",
+    "indian_english": "Indian English",
+    "hindi": "Hindi",
+}
+
 st.set_page_config(page_title="CourseMateAi", page_icon="🖋️", layout="wide")
 
 PROMPT = ChatPromptTemplate.from_messages(
@@ -63,11 +68,9 @@ PROMPT = ChatPromptTemplate.from_messages(
         ),
         (
             "human",
-            """Context:
-{context}
+            """Context: {context}
 
-Question:
-{question}
+Question: {question}
 """,
         ),
     ]
@@ -424,7 +427,7 @@ def process_documents(uploaded_files, urls, chunk_size, chunk_overlap):
     added = []
     skipped = []
 
-    # --- PDFs ---------------------------------------------------------------
+    # --- PDFs -----------------------------------------------------------------
     for uploaded_file in uploaded_files or []:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(uploaded_file.getbuffer())
@@ -460,7 +463,7 @@ def process_documents(uploaded_files, urls, chunk_size, chunk_overlap):
         else:
             skipped.append({"name": uploaded_file.name, "reason": "text was extracted but produced no chunks after splitting"})
 
-    # --- URLs -----------------------------------------------------------------
+    # --- URLs -------------------------------------------------------------------
     if urls:
         try:
             loader = WebBaseLoader(urls)
@@ -568,11 +571,35 @@ def strip_markdown_for_speech(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def synthesize_speech(text: str) -> bytes:
-    """Generate an MP3 narration of the given text using gTTS."""
+def detect_lang_for_tts(text: str) -> str:
+    """Auto-detect voice language: Devanagari characters -> Hindi voice, else English."""
+    return "hi" if re.search(r"[\u0900-\u097F]", text) else "en"
+
+
+def synthesize_speech(text: str, voice_mode: str = "auto") -> bytes:
+    """
+    Generate an MP3 narration of the given text using gTTS, tuned for
+    Indian listeners.
+
+    voice_mode:
+      - "hindi"          -> always speak in Hindi (lang="hi")
+      - "indian_english" -> always speak in English with an Indian accent (tld="co.in")
+      - "auto" (default) -> detect Devanagari script in the text and pick
+                             Hindi if present, otherwise Indian-accented English
+    """
     clean_text = strip_markdown_for_speech(text)
+
+    if voice_mode == "hindi":
+        lang = "hi"
+    elif voice_mode == "indian_english":
+        lang = "en"
+    else:  # auto
+        lang = detect_lang_for_tts(clean_text)
+
     buf = io.BytesIO()
-    gTTS(text=clean_text or text, lang="en").write_to_fp(buf)
+    # tld="co.in" gives an Indian accent for English speech; it has no effect
+    # on the Hindi voice, but is harmless to pass either way.
+    gTTS(text=clean_text or text, lang=lang, tld="co.in").write_to_fp(buf)
     buf.seek(0)
     return buf.read()
 
@@ -587,7 +614,7 @@ def render_passages(passages):
             )
 
 
-def handle_query(query, k, fetch_k, lambda_mult, model_name, temperature, voice_answers=False):
+def handle_query(query, k, fetch_k, lambda_mult, model_name, temperature, voice_answers=False, voice_mode="auto"):
     st.session_state.messages.append({"role": "user", "content": query})
     with st.chat_message("user", avatar="🧭"):
         st.markdown(query)
@@ -615,7 +642,7 @@ def handle_query(query, k, fetch_k, lambda_mult, model_name, temperature, voice_
             if voice_answers and answer:
                 with st.spinner("🔊 Generating voice..."):
                     try:
-                        st.audio(synthesize_speech(answer), format="audio/mp3", autoplay=True)
+                        st.audio(synthesize_speech(answer, voice_mode), format="audio/mp3", autoplay=True)
                     except Exception as e:
                         st.caption(f"Voice playback unavailable: {e}")
 
@@ -702,9 +729,19 @@ with st.sidebar:
 
     model_name = st.selectbox("Model", MODEL_OPTIONS, index=0)
     temperature = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
+
     voice_answers = st.checkbox(
         "🔊 Read answers aloud", value=False, help="Speak each new answer using text-to-speech"
     )
+    voice_mode = "auto"
+    if voice_answers:
+        voice_mode = st.selectbox(
+            "Voice style",
+            list(VOICE_MODE_LABELS.keys()),
+            format_func=lambda x: VOICE_MODE_LABELS[x],
+            help="Auto-detect picks Hindi or Indian-accented English based on the answer's script.",
+        )
+
     k = st.slider("Chunks returned (k)", 1, 30, 10, 1)
     fetch_k = st.slider("Candidates scanned (fetch_k)", 10, 200, 100, 10)
     lambda_mult = st.slider("Relevance ↔ Diversity", 0.0, 1.0, 0.5, 0.05)
@@ -786,7 +823,6 @@ else:
                 if st.button(question, use_container_width=True, key=f"suggest_{i}"):
                     active_query = question
 
-
     for msg in st.session_state.messages:
         avatar = "🧭" if msg["role"] == "user" else "🖋️"
         with st.chat_message(msg["role"], avatar=avatar):
@@ -821,8 +857,8 @@ else:
                 st.warning("Couldn't catch that — try speaking again, closer to the mic.")
 
     if active_query:
-        handle_query(active_query, k, fetch_k, lambda_mult, model_name, temperature, voice_answers)
+        handle_query(active_query, k, fetch_k, lambda_mult, model_name, temperature, voice_answers, voice_mode)
 
     typed_query = st.chat_input("Ask something about your documents...")
     if typed_query:
-        handle_query(typed_query, k, fetch_k, lambda_mult, model_name, temperature, voice_answers)
+        handle_query(typed_query, k, fetch_k, lambda_mult, model_name, temperature, voice_answers, voice_mode)
