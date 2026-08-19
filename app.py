@@ -2,13 +2,20 @@ import os
 
 os.environ.setdefault("USER_AGENT", "coursemate-ai/1.0")
 
+import hashlib
 import html
+import io
+import re
 import shutil
 import tempfile
 from collections import defaultdict
+from typing import Optional
 
 import streamlit as st
 from dotenv import load_dotenv
+
+import speech_recognition as sr
+from gtts import gTTS
 
 from langchain_community.document_loaders import PyPDFLoader, WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -338,6 +345,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []  # each: {role, content, sources (optional)}
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = []  # list of {"name", "type", "chunks"}
+if "last_voice_hash" not in st.session_state:
+    st.session_state.last_voice_hash = None  # avoids re-transcribing the same recording on rerun
 
 
 @st.cache_resource(show_spinner=False)
@@ -531,6 +540,43 @@ def answer_question(query, k, fetch_k, lambda_mult, model_name, temperature):
     return response.content, sources, passages
 
 
+def transcribe_audio(audio_bytes: bytes) -> Optional[str]:
+    """
+    Turn a recorded WAV clip (from st.audio_input) into text using the free
+    Google Web Speech API — no API key required, works entirely off the
+    browser-recorded WAV bytes.
+
+    Returns the transcript, or None if the audio was unintelligible.
+    Raises RuntimeError if the recognition service itself is unreachable.
+    """
+    recognizer = sr.Recognizer()
+    try:
+        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+            audio_data = recognizer.record(source)
+        return recognizer.recognize_google(audio_data)
+    except sr.UnknownValueError:
+        return None
+    except sr.RequestError as e:
+        raise RuntimeError(f"speech recognition service unavailable ({e})")
+
+
+def strip_markdown_for_speech(text: str) -> str:
+    """Remove Markdown syntax so gTTS doesn't read out asterisks, hashes, etc."""
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)  # code blocks
+    text = re.sub(r"[*_`#>-]+", " ", text)
+    text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", text)  # markdown links -> label
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def synthesize_speech(text: str) -> bytes:
+    """Generate an MP3 narration of the given text using gTTS."""
+    clean_text = strip_markdown_for_speech(text)
+    buf = io.BytesIO()
+    gTTS(text=clean_text or text, lang="en").write_to_fp(buf)
+    buf.seek(0)
+    return buf.read()
+
+
 def render_passages(passages):
     with st.expander(f"📄 View source passages ({len(passages)})"):
         for p in passages:
@@ -541,7 +587,7 @@ def render_passages(passages):
             )
 
 
-def handle_query(query, k, fetch_k, lambda_mult, model_name, temperature):
+def handle_query(query, k, fetch_k, lambda_mult, model_name, temperature, voice_answers=False):
     st.session_state.messages.append({"role": "user", "content": query})
     with st.chat_message("user", avatar="🧭"):
         st.markdown(query)
@@ -565,6 +611,13 @@ def handle_query(query, k, fetch_k, lambda_mult, model_name, temperature):
                     )
                 if passages:
                     render_passages(passages)
+
+            if voice_answers and answer:
+                with st.spinner("🔊 Generating voice..."):
+                    try:
+                        st.audio(synthesize_speech(answer), format="audio/mp3", autoplay=True)
+                    except Exception as e:
+                        st.caption(f"Voice playback unavailable: {e}")
 
     st.session_state.messages.append(
         {"role": "assistant", "content": answer, "sources": sources, "passages": passages}
@@ -649,6 +702,9 @@ with st.sidebar:
 
     model_name = st.selectbox("Model", MODEL_OPTIONS, index=0)
     temperature = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
+    voice_answers = st.checkbox(
+        "🔊 Read answers aloud", value=False, help="Speak each new answer using text-to-speech"
+    )
     k = st.slider("Chunks returned (k)", 1, 30, 10, 1)
     fetch_k = st.slider("Candidates scanned (fetch_k)", 10, 200, 100, 10)
     lambda_mult = st.slider("Relevance ↔ Diversity", 0.0, 1.0, 0.5, 0.05)
@@ -747,9 +803,26 @@ else:
             if msg.get("passages"):
                 render_passages(msg["passages"])
 
+    voice_clip = st.audio_input("🎤 Or ask a question by voice")
+    if voice_clip is not None:
+        audio_bytes = voice_clip.getvalue()
+        audio_hash = hashlib.md5(audio_bytes).hexdigest()
+        if audio_hash != st.session_state.last_voice_hash:
+            st.session_state.last_voice_hash = audio_hash
+            with st.spinner("Listening..."):
+                try:
+                    transcript = transcribe_audio(audio_bytes)
+                except RuntimeError as e:
+                    transcript = None
+                    st.error(f"Could not reach the speech recognition service: {e}")
+            if transcript:
+                active_query = transcript
+            else:
+                st.warning("Couldn't catch that — try speaking again, closer to the mic.")
+
     if active_query:
-        handle_query(active_query, k, fetch_k, lambda_mult, model_name, temperature)
+        handle_query(active_query, k, fetch_k, lambda_mult, model_name, temperature, voice_answers)
 
     typed_query = st.chat_input("Ask something about your documents...")
     if typed_query:
-        handle_query(typed_query, k, fetch_k, lambda_mult, model_name, temperature)
+        handle_query(typed_query, k, fetch_k, lambda_mult, model_name, temperature, voice_answers)
