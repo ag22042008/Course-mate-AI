@@ -12,3 +12,6 @@ python-dotenv
 pypdf
 streamlit==1.61.0
 starlette<1.4.0
+
+SpeechRecognition==3.10.4
+gTTS==2.5.4
