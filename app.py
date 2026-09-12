@@ -18,7 +18,8 @@ from gtts import gTTS
 
 from langchain_community.document_loaders import PyPDFLoader, WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_mistralai import MistralAIEmbeddings, ChatMistralAI
+from langchain_mistralai import MistralAIEmbeddings
+from langchain_groq import ChatGroq
 from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -31,11 +32,12 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 PERSIST_DIR = "chroma_db"
 COLLECTION_NAME = "rag_collection"
+# Chat/answering model now runs on Groq. Embeddings stay on Mistral (see
+# get_embedding_model below) since Groq doesn't offer an embeddings endpoint.
 MODEL_OPTIONS = [
-    "mistral-small-2506",
-    "mistral-small-latest",
-    "mistral-medium-latest",
-    "mistral-large-latest",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.6-27b",
 ]
 SUGGESTED_QUESTIONS = [
     "Summarize this document.",
@@ -354,12 +356,16 @@ if "last_voice_hash" not in st.session_state:
 
 @st.cache_resource(show_spinner=False)
 def get_embedding_model():
+    # Embeddings stay on Mistral — Groq does not currently offer an
+    # embeddings endpoint, so only the chat/generation model below moved.
     return MistralAIEmbeddings()
 
 
 @st.cache_resource(show_spinner=False)
 def get_llm(model_name: str, temperature: float):
-    return ChatMistralAI(model=model_name, temperature=temperature)
+    # Chat/answering model now served by Groq. Requires GROQ_API_KEY to be
+    # set (e.g. in your .env file) — ChatGroq picks it up automatically.
+    return ChatGroq(model=model_name, temperature=temperature)
 
 
 def clear_chroma_system_cache():
